@@ -1,2 +1,6 @@
 (library
- (name mocaml))
+ (libraries ppxlib) 
+ (kind ppx_rewriter)
+ (public_name mocaml)
+ (name mocaml)
+  (preprocess (pps ppxlib.metaquot)))

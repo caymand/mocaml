@@ -1,4 +1,5 @@
 (executable
  (public_name mocaml)
  (name main)
- (libraries mocaml))
+ (libraries mocaml ppxlib)
+ (preprocess (pps mocaml)))

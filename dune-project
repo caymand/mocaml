@@ -5,11 +5,11 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github caymand/mocaml))
 
-(authors "Author Name")
+(authors "Kristoffer Kortbaek")
 
-(maintainers "Maintainer Name")
+(maintainers "Kristoffer Kortbaek")
 
 (license LICENSE)
 
