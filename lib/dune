@@ -1,5 +1,5 @@
 (library
- (libraries ppxlib) 
+ (libraries ppxlib algaeff) 
  (kind ppx_rewriter)
  (public_name mocaml)
  (name mocaml)
