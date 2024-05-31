@@ -3,33 +3,49 @@ open Ppxlib
 let fail_for_op symb ~loc =
   Location.raise_errorf ~loc "Expected '%s'" symb (Format.std_formatter)
 
+let fail_with text ~loc =
+  Location.raise_errorf ~loc text
+
 let match_plus ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   match expr with
-  | [%expr [%e? _t] [%e? _e1] [%e? e2]] ->
-    [%expr 1 + [%e e2]]
+  | [%expr [%e? t] [%e? e1] [%e? e2]] ->
+    begin
+      match t with
+      | [%expr 1] -> [%expr [%e e1] + [%e e2]]
+      (* TODO: Add case for other binding times *)
+      | _ -> fail_with "Invalid binding time" ~loc
+    end
   | _ -> fail_for_op "+" ~loc
 
 
 
-  (* let rec process_expr expr = *)
-  (*   match expr with *)
-  (*   | [%expr [%e? _] [%e? e2]] -> *)
-  (*     let e2' = process_expr e2 in *)
-  (*     [%expr 1 + [%e e2']] *)
-  (*   | _ -> expr *)
-  (* in *)
-           
-(* let traverse ~ctxt expr = *)
+(* let lift ~ctxt expr = *)
 (*   let loc = Expansion_context.Extension.extension_point_loc ctxt in *)
-(*   let foo = object *)
-(*     inherit [Int.t] Ast_traverse.fold as super *)
+(*   (\* let ident = Ast_pattern.pexp_ident (Ast_pattern.lident)     *\) *)
+(*   match expr with *)
+(*   | [%expr [%e t] [%e e1]] -> *)
+(*   2 *)
 
-(*     method! expression e acc = *)
-(*       let acc = super#expression e acc in *)
-(*       match e with *)
-(*       | [%expr [%e? _] [%e? _]] -> acc + 1 *)
-(*       | _ -> super#expression e acc *)
+(*
+Strategy:
+   Given a binding time of the operations, then assume that the parameters have
+   the same binding time. In case not - raise an error.
+   Then execute what can be executed and otherwise produce code.
+*)
+(* let plus ctxt =  *)
+(*   let loc = Expansion_context.Extension.extension_point_loc ctxt in *)
+  
+(*   let rewriter = object *)
+(*     inherit [(String.t * Int.t) list] Ast_traverse.map_with_context as super *)
 
+(*     method! expression ctxt = function *)
+(*       | [%expr [%e? t] [%e? e1] [%e? e2]] -> begin *)
+(*           match t with *)
+(*           | [%expr 0] -> fail_with "invalid bt" ~loc *)
+(*           | [%expr 1] -> [%expr [%e e1] + [%e e2]] *)
+(*           | _ -> fail_with "foo" ~loc *)
+(*         end *)
+(*       | _ -> fail_with "invalid +" ~loc *)
 (*   end *)
-(*   in foo# *)
+(*   in rewriter#expression *)

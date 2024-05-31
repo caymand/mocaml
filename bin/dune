@@ -2,4 +2,5 @@
  (public_name mocaml)
  (name main)
  (libraries mocaml ppxlib)
- (preprocess (pps mocaml)))
+ (preprocess
+  (pps mocaml)))
