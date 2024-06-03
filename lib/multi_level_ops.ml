@@ -96,8 +96,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
 
     inherit [ml_ops] Ast_traverse.lift as super
 
-    method string _e =
-      failwith @@ "string not implemented " ^ _e;                  
+    method string _e = Expr {v=(Val 0); t=0}
     method tuple _ = failwith "tuple not implemented"
     method unit _ = failwith "not implemented"
     method record _ = failwith "not implemented"
@@ -106,11 +105,15 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
     method int32 _ = failwith "not implemented"
     method other _ = failwith "not implemented"
     method nativeint _ = failwith "not implemented"
-    method int _ = failwith "int not implemented"
+    method int i =
+      print_int i;
+      failwith "int not implemented"
     method float _ =  failwith "not implemented"
-    method constr c =
-      print_endline @@ "constr: " ^ c;
-      failwith "constr not implemented"
+    method constr _c ml_ops = List.hd ml_ops
+      (* print_endline @@ "constr: " ^ c; *)
+      (* print_endline @@ [%show: ml_ops list] _foo; *)
+      (* failwith "constr not implemented" *)
+      
     method char _ = failwith "char not implemented"
     method bool _ = failwith "not implemented"
     method array _ = failwith "not implemented"
@@ -128,8 +131,12 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | "plus" -> begin
               match strct with
               | [%str [%e? t] [%e? e1] [%e? e2]] ->
-                let e1' = super#expression e1
-                and e2' = super#expression e2 in
+                print_endline @@ "e1: " ^ (show_exp e1);
+                let e1' = super#expression e1 in
+                show_ml_ops e1' |> print_endline;
+                print_endline @@ "e2: " ^ (show_exp e2);
+                let e2' = super#expression e2 in
+                show_ml_ops e2' |> print_endline;
                 Add (get_bt t.pexp_desc, e1',  e2')
               | _ ->                
                 failwith "Incorrect format"
@@ -137,7 +144,8 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | "lift" -> begin
               match strct with
               | [%str [%e? t] [%e? e]] ->
-                let bt = get_bt t.pexp_desc in
+                print_endline "matched lift";
+                let bt = get_bt t.pexp_desc in                
                 create_ml_expr e.pexp_desc ~t:bt
               | _ -> failwith "incorrect format"
             end
@@ -161,7 +169,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | Pexp_constant (Pconst_integer (s, _)) ->
             let v = int_of_string s in
             Expr {v=(Val v); t = 0}
-          (* | Pexp_ident {txt =(Lident _var); loc=_loc} ->             *)
           | _ -> failwith "not implemented here"
         end
   end in  
