@@ -4,4 +4,4 @@
  (public_name mocaml)
  (name mocaml)
  (preprocess
-  (pps ppxlib.metaquot)))
+  (pps ppxlib.metaquot ppx_deriving.show)))
