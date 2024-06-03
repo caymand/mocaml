@@ -1,7 +1,7 @@
 open Ppxlib
 
 let fail_with text ~loc =
-  Location.raise_errorf ~loc text
+  Location.raise_errorf ~loc "%s" text
 
 let pp_pattern fmt pat =
   match pat.ppat_desc with
@@ -29,7 +29,7 @@ type ml_defs = {
 }[@@deriving show]
 
 (* Primitive types that each expression can take. *)
-type ml_val = Val of int | Ident of string [@@deriving show]
+type ml_val = Val of int | Ident of string [@@deriving show, eq]
 (* Wrapper to store binding time info *)
 and ml_expr = {
   v: ml_val;
@@ -37,7 +37,10 @@ and ml_expr = {
 } [@@deriving show]
 
 (* Supported Ops *)
-type ml_ops = Add of int * ml_ops * ml_ops | Expr of ml_expr [@@deriving show]
+type ml_ops = Add of int * ml_ops * ml_ops
+            | Expr of ml_expr
+            | Lift of ml_ops [@@deriving show, eq]
+                
 
 module E = Algaeff.State.Make (struct type t = (string * int) list end)
 
@@ -46,107 +49,114 @@ let eval_leaf = function
   | Ident ident ->
     List.assoc_opt ident @@ E.get ()
 
-let rec eval e = let (let*) = Result.bind in
-  match e with
-  | Add (1, Expr {v=v1; t=1}, Expr {v=v2; t=1}) ->
-    let v = Option.bind (eval_leaf v1)
-        (fun v1' -> Option.bind (eval_leaf v2) (
-             fun v2' ->
-               Some (v1'+v2'))) in
-    if Option.is_none v then Result.error "Variable out of scope used"
-    else let v' = Option.get v in
-      Result.ok @@ Expr {v=(Val v'); t=0}
-  | Add (t, Expr e1, Expr e2) ->
-    if e1.t != e2.t || e1.t != t
-    then Result.error "Cannot add number of different binding times."
-    else let t' = t-1 in
-      Result.ok (Add (t', Expr {e1 with t = t'}, Expr {e2 with t = t'}))
-  | Add (t, e1, e2) ->
-    let* e1' = eval e1 in
-    let* e2' = eval e2 in
-    Result.ok @@ Add (t-1, e1', e2')
-  | Expr e -> Result.ok @@ Expr e
-  (* | _ -> Result.error "Not implemented" *)
+let rec bt_of_expr = function
+  | Add (t, _, _) -> t
+  | Expr {v=_; t} -> t
+  | Lift op -> 1 + bt_of_expr op
 
-let specialize_ml_ops expr arg _arg_name =
-  (* First, fully evaluate the argument *)
-  let v = eval arg in
-  Result.get_ok v |> show_ml_ops |> print_endline;
+let replace ~ident ~with_val in_op = let (let*) = Result.bind in
+  let rec go op = 
+    match op with
+    | Add (1, Expr {v=v1; t=1}, Expr {v=v2; t=1}) ->
+      let v = Option.bind (eval_leaf v1)
+          (fun v1' -> Option.bind (eval_leaf v2) (
+               fun v2' ->
+                 Some (v1'+v2'))) in
+      if Option.is_none v then Result.error "Variable out of scope used"
+      else let v' = Option.get v in
+        Result.ok @@ Expr {v=(Val v'); t=0}
+    | Add (t, Expr e1, Expr e2) when e1.t != e2.t || e1.t != t ->
+      Result.error @@ Printf.sprintf
+        "Cannot add number of different binding times: %d, %d, %d"
+        t e1.t e2.t
+    | Add (_, e1, e2) ->
+      let* e1' = go e1 in
+      let* e2' = go e2 in
+      if (bt_of_expr e1') = (bt_of_expr e2') 
+      then Result.ok @@ Add (bt_of_expr e1', e1', e2')
+      else Result.error @@
+        Printf.sprintf {|ICE. Binding times did not match. Before:
+%s
+%s
+After:
+%s
+%s
+ |}(show_ml_ops e1) (show_ml_ops e2) (show_ml_ops e1') (show_ml_ops e2')
+    | Expr e when equal_ml_val e.v ident ->
+      Result.ok @@ Lift (Expr {v=with_val; t = (e.t - 1)})
+    | Expr e -> Result.ok @@ Expr e
+    | _ -> Result.ok op    
+  in
+  go in_op
 
-  expr
+let rec cogen ~loc = function
+  | Add (_t, e1, e2) ->
+    let e1' = cogen e1 ~loc
+    and e2' = cogen e2 ~loc in
+    [%expr [%e e1'] [%e e2']]
+  | Expr e -> begin
+      match e.v with
+      | Val v ->      
+        [%expr [%e (Ast_builder.Default.eint v ~loc)]]
+      | Ident id -> [%expr [%e (Ast_builder.Default.evar id ~loc)]]
+    end
+  | Lift e -> cogen e ~loc
 
-let get_bt = function
+let bt_of_pexp_desc = function
   | Pexp_constant (Pconst_integer (s, _)) -> int_of_string s
   | _ ->
     print_endline "Expected constant of the bt";
-    failwith "bt must be a constant"
+    failwith "
+bt must be a constant"
 
 let create_ml_expr ?(t = 0) (pexp_desc : expression_desc) =
   match pexp_desc with
   | Pexp_constant (Pconst_integer (s, _)) ->
     let v = Val (int_of_string s) in
-    Expr {v; t}
+    {v; t}
   | Pexp_ident {txt =(Lident var); loc=_loc} ->
-    Expr {v=(Ident var); t}
-  | _ ->
+    {v=(Ident var); t}
+  | _ ->    
     failwith "not implemented here"
 
-let specialize (to_specialize : expression) (arg : expression) : expression =  
-  let mapper = object
+let specialize (to_specialize : expression) (arg : expression) : expression =
+  let module S = Algaeff.State.Make (struct type t = ml_ops end) in
+  let (let*) = Result.bind in
+  let lift v ident = object           
+    inherit Ast_traverse.iter as super
 
-    inherit [ml_ops] Ast_traverse.lift as super
-
-    method string _e = Expr {v=(Val 0); t=0}
-    method tuple _ = failwith "tuple not implemented"
-    method unit _ = failwith "not implemented"
-    method record _ = failwith "not implemented"
-    method nativint _ = failwith "nativeint not implemented"
-    method int64 _ = failwith "int64 not implemented"
-    method int32 _ = failwith "not implemented"
-    method other _ = failwith "not implemented"
-    method nativeint _ = failwith "not implemented"
-    method int i =
-      print_int i;
-      failwith "int not implemented"
-    method float _ =  failwith "not implemented"
-    method constr _c ml_ops = List.hd ml_ops
-      (* print_endline @@ "constr: " ^ c; *)
-      (* print_endline @@ [%show: ml_ops list] _foo; *)
-      (* failwith "constr not implemented" *)
-      
-    method char _ = failwith "char not implemented"
-    method bool _ = failwith "not implemented"
-    method array _ = failwith "not implemented"
-
+    (* Traverse the extension notes*)
     method! extension ext =
       let (ext_loc, payload) = ext in
-      let _loc = ext_loc.loc in
+      let loc = ext_loc.loc in
       match payload with
       | PPat (_pat, Some _expr) ->
-        print_endline "ppat";
         super#extension ext
-      | PStr strct -> begin
-          "struct " ^ ext_loc.txt ^ " "  ^ (show_strct strct) |> print_endline;
+      | PStr strct -> begin          
           match ext_loc.txt with
           | "plus" -> begin
               match strct with
               | [%str [%e? t] [%e? e1] [%e? e2]] ->
-                print_endline @@ "e1: " ^ (show_exp e1);
-                let e1' = super#expression e1 in
-                show_ml_ops e1' |> print_endline;
-                print_endline @@ "e2: " ^ (show_exp e2);
-                let e2' = super#expression e2 in
-                show_ml_ops e2' |> print_endline;
-                Add (get_bt t.pexp_desc, e1',  e2')
+                let op = 
+                  let _ = super#expression e1 in let e1' = S.get () in
+                  let _ = super#expression e2 in let e2' = S.get() in
+                  let* e1'' = replace ~ident:ident ~with_val:v e1' in
+                  let* e2'' = replace ~ident:ident ~with_val:v e2' in
+                  Result.ok @@ Add (bt_of_pexp_desc t.pexp_desc, e1'',  e2'')
+                in
+                let _ = Result.fold
+                  ~ok:(fun op -> cogen op ~loc)
+                  ~error:(fun err -> fail_with err ~loc)
+                  op in ()
               | _ ->                
                 failwith "Incorrect format"
             end
           | "lift" -> begin
               match strct with
               | [%str [%e? t] [%e? e]] ->
-                print_endline "matched lift";
-                let bt = get_bt t.pexp_desc in                
-                create_ml_expr e.pexp_desc ~t:bt
+                let bt = bt_of_pexp_desc t.pexp_desc in                
+                let ml_expr = create_ml_expr e.pexp_desc ~t:bt in
+                S.set (Expr ml_expr)
               | _ -> failwith "incorrect format"
             end
           | _ ->
@@ -154,37 +164,48 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
             failwith "extension not yet implemented"
         end
       | _ ->
-        (* fail_with "ICE. Case should not happen" ~loc *)
         super#extension ext
 
+    (* Traverse expressions and build up simples values *)
     method! expression expr =
-      "expr: " ^ (show_exp expr) |> print_endline;
       match expr with
       | [%expr fun [%p? _] -> [%e? rest]] ->
         (* We ignore these bindings.
            They will have to be specizlized later *)
         super#expression rest
+      (* TODO: more cases should be handled *)
       | _ -> begin
           match expr.pexp_desc with
           | Pexp_constant (Pconst_integer (s, _)) ->
             let v = int_of_string s in
-            Expr {v=(Val v); t = 0}
-          | _ -> failwith "not implemented here"
+            S.set @@ Expr {v=(Val v); t = 0}
+          | _ ->
+            print_endline @@ "unexpected: " ^ show_exp expr;
+            failwith "not implemented here"
         end
-  end in  
-  let _arg' = mapper#expression arg in
+  end in
+  let arg_ml_expr = create_ml_expr arg.pexp_desc in
   let loc = to_specialize.pexp_loc in
-  match to_specialize with
-  | [%expr fun [%p? ident] -> [%e? rest]] -> begin
-      match ident.ppat_desc with
-      | Ppat_var _ident_loc ->        
-        let _to_specialize' = mapper#expression rest in
-        show_ml_ops _to_specialize' |> print_endline;
-        [%expr fun [%p ident] -> [%e rest]]
-      | _ -> fail_with "invalid type" ~loc:ident.ppat_loc
-    end
-  | _ -> fail_with "wrong type" ~loc:to_specialize.pexp_loc
-
+  (* Traverse the tree inside an effect handler to collect states *)
+  S.run ~init:(Expr arg_ml_expr) (fun () ->
+      match to_specialize with
+      | [%expr fun [%p? ident] -> [%e? rest]] -> begin
+          match ident.ppat_desc with
+          | Ppat_var ident_loc ->        
+            (lift arg_ml_expr.v @@ Ident ident_loc.txt)#expression rest;
+            let to_specialize' = S.get ()
+                                 |> replace ~ident:(Ident ident_loc.txt) ~with_val:arg_ml_expr.v
+            in
+            begin match to_specialize' with
+              | Ok res ->
+                show_ml_ops res |> print_endline;
+                [%expr fun [%p ident] -> [%e rest]]
+              | Error err -> fail_with err ~loc:rest.pexp_loc
+            end
+          | _ -> fail_with "invalid type" ~loc:ident.ppat_loc
+        end
+      | _ -> fail_with "wrong type" ~loc:to_specialize.pexp_loc
+    )
 
 let map_structure (structure : structure) =
   (* TODO: maybe inpalce updates. We already track these effects *)

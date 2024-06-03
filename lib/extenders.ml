@@ -3,9 +3,9 @@ open Ppxlib
 let plus_ext = "plus"
 let minus_ext = "-"
 
-let run_file () =
-  (* let impl = Multi_level_ops.map_exprs ~acc:[] in *)
+let run_file () =  
   let impl = Multi_level_ops.map_structure in
+  (* TODO: make it instrument and run before the context_free *)
   Driver.register_transformation "global" ~impl
 
 let () = run_file ()
