@@ -49,10 +49,10 @@ let eval_leaf = function
   | Ident ident ->
     List.assoc_opt ident @@ E.get ()
 
-let rec bt_of_expr = function
+let rec bt_of_ops = function
   | Add (t, _, _) -> t
   | Expr {v=_; t} -> t
-  | Lift op -> 1 + bt_of_expr op
+  | Lift op -> 1 + bt_of_ops op
 
 let replace ~ident ~with_val in_op = let (let*) = Result.bind in
   let rec go op = 
@@ -72,8 +72,8 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Add (_, e1, e2) ->
       let* e1' = go e1 in
       let* e2' = go e2 in
-      if (bt_of_expr e1') = (bt_of_expr e2') 
-      then Result.ok @@ Add (bt_of_expr e1', e1', e2')
+      if (bt_of_ops e1') = (bt_of_ops e2') 
+      then Result.ok @@ Add (bt_of_ops e1', e1', e2')
       else Result.error @@
         Printf.sprintf {|ICE. Binding times did not match. Before:
 %s
@@ -88,6 +88,19 @@ After:
     | _ -> Result.ok op    
   in
   go in_op
+
+let gen_plus ~ctxt expr =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  match expr with
+  | [%expr [%e? t] [%e? e1] [%e? e2]] ->
+    begin
+      match t with
+      | [%expr 1] -> [%expr [%e e1] + [%e e2]]
+      (* TODO: Add case for other binding times *)
+      | _ -> fail_with "Invalid binding time" ~loc
+    end
+  | _ -> fail_with "failed generating code for plus" ~loc
+
 
 let rec cogen ~loc = function
   | Add (_t, e1, e2) ->
@@ -121,14 +134,14 @@ let create_ml_expr ?(t = 0) (pexp_desc : expression_desc) =
 
 let specialize (to_specialize : expression) (arg : expression) : expression =
   let module S = Algaeff.State.Make (struct type t = ml_ops end) in
-  let (let*) = Result.bind in
+  (* let (let*\) = Result.bind in *)
   let lift v ident = object           
     inherit Ast_traverse.iter as super
 
     (* Traverse the extension notes*)
     method! extension ext =
       let (ext_loc, payload) = ext in
-      let loc = ext_loc.loc in
+      let _loc = ext_loc.loc in
       match payload with
       | PPat (_pat, Some _expr) ->
         super#extension ext
@@ -137,17 +150,19 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | "plus" -> begin
               match strct with
               | [%str [%e? t] [%e? e1] [%e? e2]] ->
-                let op = 
-                  let _ = super#expression e1 in let e1' = S.get () in
-                  let _ = super#expression e2 in let e2' = S.get() in
-                  let* e1'' = replace ~ident:ident ~with_val:v e1' in
-                  let* e2'' = replace ~ident:ident ~with_val:v e2' in
-                  Result.ok @@ Add (bt_of_pexp_desc t.pexp_desc, e1'',  e2'')
-                in
-                let _ = Result.fold
-                  ~ok:(fun op -> cogen op ~loc)
-                  ~error:(fun err -> fail_with err ~loc)
-                  op in ()
+                (* let op =  *)
+                let _ = super#expression e1 in let e1' = S.get () in 
+                let _ = super#expression e2 in let e2' = S.get() in
+                S.set @@ Add (bt_of_pexp_desc t.pexp_desc, e1',  e2')
+                (*   let* e1'' = replace ~ident:ident ~with_val:v e1' in *)
+                (*   let* e2'' = replace ~ident:ident ~with_val:v e2' in                   *)
+                (*   Result.ok @@ Add (bt_of_pexp_desc t.pexp_desc, e1'',  e2'') *)
+                (* in *)
+                (* let _op' = Result.fold *)
+                (*   ~ok:(fun op -> cogen op ~loc) *)
+                (*   ~error:(fun err -> fail_with err ~loc) *)
+                (*   op *)
+                (* in () *)
               | _ ->                
                 failwith "Incorrect format"
             end
@@ -160,7 +175,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
               | _ -> failwith "incorrect format"
             end
           | _ ->
-            print_endline "huh";
             failwith "extension not yet implemented"
         end
       | _ ->
@@ -172,13 +186,13 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
       | [%expr fun [%p? _] -> [%e? rest]] ->
         (* We ignore these bindings.
            They will have to be specizlized later *)
-        super#expression rest
+        super#expression rest          
       (* TODO: more cases should be handled *)
       | _ -> begin
           match expr.pexp_desc with
           | Pexp_constant (Pconst_integer (s, _)) ->
             let v = int_of_string s in
-            S.set @@ Expr {v=(Val v); t = 0}
+            S.set @@ Expr {v=(Val v); t = 0}          
           | _ ->
             print_endline @@ "unexpected: " ^ show_exp expr;
             failwith "not implemented here"

@@ -1,5 +1,6 @@
 (library
  (libraries ppxlib algaeff)
+ (flags (:standard -w -27 -warn-error -26))
  (kind ppx_rewriter)
  (public_name mocaml)
  (name mocaml)

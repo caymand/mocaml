@@ -3,19 +3,20 @@ open Ppxlib
 let plus_ext = "plus"
 let minus_ext = "-"
 
-let run_file () =  
-  let impl = Multi_level_ops.map_structure in
+let run_file () =
+  let position = Driver.Instrument.Before in
+  let instrument = Driver.Instrument.make Multi_level_ops.map_structure ~position in
   (* TODO: make it instrument and run before the context_free *)
-  Driver.register_transformation "global" ~impl
+  Driver.register_transformation "global" ~instrument
 
-let () = run_file ()
-  
-  
-  
-  (* let rule = Context_free.Rule.extension @@ *)
-  (*   Extension.V3.declare *)
-  (*     plus_ext *)
-  (*     Extension.Context.expression *)
-  (*     Ast_pattern.(single_expr_payload __) *)
-  (*     match_plus in *)
-  (* Driver.register_transformation ~rules:[rule] "expression"; *)
+
+
+let () =
+  run_file ();
+  let rule = Context_free.Rule.extension @@
+    Extension.V3.declare
+      plus_ext
+      Extension.Context.expression
+      Ast_pattern.(single_expr_payload __)
+      Multi_level_ops.gen_plus in
+  Driver.register_transformation ~rules:[rule] "expression";
