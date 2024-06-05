@@ -13,10 +13,16 @@ let run_file () =
 
 let () =
   run_file ();
-  let rule = Context_free.Rule.extension @@
+  let rule_plus = Context_free.Rule.extension @@
     Extension.V3.declare
       plus_ext
       Extension.Context.expression
       Ast_pattern.(single_expr_payload __)
       Multi_level_ops.gen_plus in
-  Driver.register_transformation ~rules:[rule] "expression";
+  let rule_lift = Context_free.Rule.extension @@
+    Extension.V3.declare
+      "lift"
+      Extension.Context.expression
+      Ast_pattern.(single_expr_payload __)
+      Multi_level_ops.gen_lift in
+  Driver.register_transformation ~rules:[rule_lift; rule_plus] "expression";

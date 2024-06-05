@@ -12,8 +12,6 @@ open! Mocaml.Extenders
           [%lift 2 a]
           [%lift 2 b]]]
 
-(* let add a b = a + b(\* [%plus a b] *\) *)
-
 let add = [%run add_ml 4]
 
 let () =  
