@@ -95,3 +95,29 @@ This means we need an environment to keep track of so called multi-stage
 functions. We can look up the structure items until we find a matching `add`
 function, and then copy the expressions and modify them.
 
+
+It has occurred to me that `[%lift t s e]` is actually semantically
+important. Consider this program:
+
+```
+[%%ml let add_ml a b = [%plus 2
+          [%lift 2 a]           (* a has binding time t = 1 *)
+          [%lift 2 b]]]         (* b has binding time t = 2 *)
+```
+
+There is no way to signal the binding times with this lift. Meanwhile, with the
+annotation `[%lift t s e]` we know that `e` has binding time `t`, and it should
+get coerced to a value with bt of `t+s`. Therefore, we would write `[%lift 1 1
+e]`. That way, we see that `a` must be specialized once before its value is
+known and twice for it to be used in the enclosing. 
+Specializing the program would give us
+
+```
+[%%ml let add_ml a b = [%plus 2
+          [%lift 1 1 a]           (* a has binding time t = 1 *)
+          [%lift 2 b]]]         (* b has binding time t = 2 *)
+let add = [%run 40 add_ml] = fun b -> [%plus 1 
+                                       [%lift 0 1 40]
+                                       [%lift 1 b]]
+[%run 2 add] = 42
+```

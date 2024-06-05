@@ -31,6 +31,7 @@ type ml_val = Val of int | Ident of string [@@deriving show, eq]
 and ml_expr = {
   v: ml_val;
   t: int;
+  s: int;
 } [@@deriving show]
 
 (* Supported Ops *)
@@ -65,36 +66,29 @@ let var_name = function
 
 let rec bt_of_ops = function
   | Add (t, _, _) -> t
-  | Expr {v=_; t} -> t
+  | Expr {v=_; t; s} -> t + s
   | Lift op -> 1 + bt_of_ops op
   | Fun (_, body) -> bt_of_ops body
 
 (* This is not really replacing, so much as it is in fact
    the actual specialization. *)
 let replace ~ident ~with_val in_op = let (let*) = Result.bind in
+  let decrease_bt e v =
+    if e.t > 0
+    then {v; t = (e.t - 1); s=e.s}
+    else {v; t=0; s=(e.s - 1)} in
+
   let rec go op = 
     match op with
-    | Add (1, Expr {v=v1; t=1}, Expr {v=v2; t=1}) ->
-      let v = Option.bind (eval_leaf v1)
-          (fun v1' -> Option.bind (eval_leaf v2) (
-               fun v2' ->
-                 Some (v1'+v2'))) in
-      if Option.is_none v then Result.error "Variable out of scope used"
-      else let v' = Option.get v in
-        Result.ok @@ Expr {v=(Val v'); t=0}   
-    | Add (t, Expr e1, Expr e2) when e1.t != e2.t || e1.t != t ->
-      Result.error @@ Printf.sprintf
-        "Cannot add number of different binding times: %d, %d, %d"
-        t e1.t e2.t
-    | Add (_, e1, e2) ->
+    | Add (t, e1, e2) ->
       let* e1' = go e1 in
       let* e2' = go e2 in
       if (bt_of_ops e1') = (bt_of_ops e2') 
-      then Result.ok @@ Add (bt_of_ops e1', e1', e2')
+      then Result.ok @@ Add (t-1, e1', e2')
       else Result.error @@ Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'        
     | Expr e when equal_ml_val e.v ident ->
-      Result.ok @@ Lift (Expr {v=with_val; t = (e.t - 1)})
-    | Expr e -> Result.ok @@ Expr e
+      Result.ok @@ Expr (decrease_bt e with_val)
+    | Expr e -> Result.ok @@ Expr (decrease_bt e e.v)
     | Fun (a, body) ->
       let* body' = go body in
       Result.ok @@ Fun (a, body')
@@ -119,8 +113,13 @@ let gen_lift ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   match expr with
   | [%expr [%e? _t] [%e? e]] -> [%expr [%e e]]
+  | [%expr [%e? _t] [%e? _s] [%e? e]] -> [%expr [%e e]]
   | _ -> fail_with ~loc "Invalid lift"
 
+let gen_val ~loc = function
+  | Val v ->        
+    Ast_builder.Default.eint v ~loc
+  | Ident id -> (Ast_builder.Default.evar id ~loc)
 
 let rec cogen ~loc = function
   | Add (t, e1, e2) ->
@@ -128,12 +127,11 @@ let rec cogen ~loc = function
     and e1' = cogen e1 ~loc        
     and e2' = cogen e2 ~loc in
     [%expr [%plus [%e t'] [%e e1'] [%e e2']]]
-  | Expr e -> begin
-      match e.v with
-      | Val v ->      
-        [%expr [%e (Ast_builder.Default.eint v ~loc)]]
-      | Ident id -> [%expr [%e (Ast_builder.Default.evar id ~loc)]]
-    end
+  | Expr e -> 
+      let s = (Ast_builder.Default.eint e.s ~loc) 
+      and t = (Ast_builder.Default.eint e.t ~loc)
+      and expr = gen_val ~loc e.v in
+      [%expr [%lift [%e t] [%e s] [%e expr]]]
   | Lift e -> cogen e ~loc
   | Fun (a, body) ->
     let a' = Ast_builder.Default.ppat_var ~loc (Loc.make ~loc a) in
@@ -148,13 +146,13 @@ let bt_of_pexp_desc = function
     failwith "
 bt must be a constant"
 
-let create_ml_expr ?(t = 0) (pexp_desc : expression_desc) =
+let create_ml_expr ?(t = 0) ?(s=0) (pexp_desc : expression_desc) =
   match pexp_desc with
-  | Pexp_constant (Pconst_integer (s, _)) ->
-    let v = Val (int_of_string s) in
-    {v; t}
+  | Pexp_constant (Pconst_integer (i, _)) ->
+    let v = Val (int_of_string i) in
+    {v; t; s}
   | Pexp_ident {txt =(Lident var); loc=_loc} ->
-    {v=(Ident var); t}
+    {v=(Ident var); t; s}
   | _ ->    
     failwith "ICE. Cannot create ml_expr from the pexp_desc"
       
@@ -183,9 +181,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
                 match strct with
                 | [%str [%e? t] [%e? e1] [%e? e2]] ->
                   lift_plus t e1 e2 ~traverse:(super#expression)
-                  (* let _ = super#expression e1 in let e1' = S.get () in  *)
-                  (* let _ = super#expression e2 in let e2' = S.get() in *)
-                  (* S.set @@ Add (bt_of_pexp_desc t.pexp_desc, e1',  e2') *)
                 | _ ->                
                   failwith "Incorrect format"
               end
@@ -194,6 +189,11 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
                 | [%str [%e? t] [%e? e]] ->
                   let bt = bt_of_pexp_desc t.pexp_desc in                
                   let ml_expr = create_ml_expr e.pexp_desc ~t:bt in
+                  S.set (Expr ml_expr)
+                | [%str [%e? t] [%e? s] [%e? e]] ->
+                  let bt = bt_of_pexp_desc t.pexp_desc in
+                  let s' = bt_of_pexp_desc s.pexp_desc in
+                  let ml_expr = create_ml_expr e.pexp_desc ~t:bt ~s:s' in
                   S.set (Expr ml_expr)
                 | _ -> failwith "incorrect format"
               end
@@ -222,7 +222,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
             match expr.pexp_desc with
             | Pexp_constant (Pconst_integer (s, _)) ->
               let v = int_of_string s in
-              S.set @@ Expr {v=(Val v); t = 0}          
+              S.set @@ Expr {v=(Val v); t = 0; s = 0}          
             | _ ->
               print_endline @@ "unexpected: " ^ show_exp expr;
               failwith "not implemented here"
