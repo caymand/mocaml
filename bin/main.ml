@@ -13,6 +13,7 @@ open! Mocaml.Extenders
           [%lift 2 b]]]
 
 let add = [%run add_ml 4]
+let add2 = [%run add 2]
 
 let () =  
   let res = add 2 in
