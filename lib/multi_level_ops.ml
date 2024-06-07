@@ -99,13 +99,13 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;
   in
 
-  let rec go_cond cond =
-    print_endline @@ "cond: " ^ show_ml_cond cond;
+  let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->
+      print_endline @@ "cond: " ^ show_ml_cond cond;
       let* e1' = go e1 in
-      let* e2' = go e2 in
-      if bt_of_ops e1 = bt_of_ops e2 && bt_of_ops e1 = 0
+      let* e2' = go e2 in      
+      if bt_of_ops e1' = bt_of_ops e2' && bt_of_ops e1' = 0
       then let* v1 = eval e1' in
         let* v2 = eval e2' in
         Result.ok @@ Bool (v1 < v2)
@@ -145,6 +145,8 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       then Result.ok @@ Lift (s-1, e')
       else Result.ok @@ Lift (s, e')
     | IfElse (cond, e_then, e_else) ->
+      (* print_endline "if then else"; *)
+      (* print_endline @@ show_ml_ops op; *)
       let* cond' = go_cond cond in
       begin
         match cond' with
@@ -202,7 +204,7 @@ let rec cogen ~loc op = match op with
       | _ -> cogen e ~loc
     and t = Ast_builder.Default.eint ~loc @@ bt_of_ops e 
     and s' = Ast_builder.Default.eint s ~loc in
-    [%expr [%lift [%e t] [%e s'] [%e e]]]
+    [%expr [%lift [%e s'] [%e t] [%e e]]]
   | Fun (a, body) ->
     let a' = Ast_builder.Default.ppat_var ~loc (Loc.make ~loc a) in
     let body' = cogen body ~loc in
@@ -279,7 +281,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           in          
           S.set (Lift (s', e'))
         | [%expr if [%e? e1] < [%e? e2] then [%e? b1] else [%e? b2]] ->
-          print_endline "if expression";
+          (* TODO: will not generate correctly if e1 or e2 are not lift operations *)
           self#expression e1;
           let e1' = S.get () in
           self#expression e2;

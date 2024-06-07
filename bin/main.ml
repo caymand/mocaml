@@ -1,6 +1,6 @@
 open! Mocaml.Extenders
 
-[%%ml let add_ml a b c = if a < b
+[%%ml let add_ml a b c = if [%lift 2 b] < [%lift 1 1 a]
         then ([%plus 3
           [%lift 1 2
               [%plus 2
@@ -14,7 +14,8 @@ open! Mocaml.Extenders
 (*           [%lift 2 b]]] *)
 
 let add = [%run add_ml 4]
-(* let add' = [%run add 2] *)
+let add' = [%run add 2]
+(* let add'' = [%run add' 0] *)
 let () =
   (* let _res = add 6 in *)
   ()
