@@ -31,13 +31,12 @@ type ml_val = Val of int | Ident of string [@@deriving show, eq]
 and ml_expr = {
   v: ml_val;
   t: int;
-  s: int;
 } [@@deriving show]
 
 (* Supported Ops *)
 type ml_ops = Add of int * ml_ops * ml_ops
             | Expr of ml_expr
-            | Lift of ml_ops
+            | Lift of int * ml_ops
             | Fun of string * ml_ops
 [@@deriving show, eq]
 
@@ -58,6 +57,7 @@ module E = Algaeff.State.Make (struct type t = (string * int) list end)
 let eval_leaf = function
   | Val v -> Some v
   | Ident ident ->
+    print_endline @@ "eval leaf ident: " ^ ident;
     List.assoc_opt ident @@ E.get ()
 
 let var_name = function
@@ -66,20 +66,41 @@ let var_name = function
 
 let rec bt_of_ops = function
   | Add (t, _, _) -> t
-  | Expr {v=_; t; s} -> t + s
-  | Lift op -> 1 + bt_of_ops op
+  | Expr {v=_; t} -> t
+  | Lift (s, op) -> s + bt_of_ops op
   | Fun (_, body) -> bt_of_ops body
 
 (* This is not really replacing, so much as it is in fact
    the actual specialization. *)
 let replace ~ident ~with_val in_op = let (let*) = Result.bind in
+  (* TODO:FIXME *)
   let decrease_bt e v =
     if e.t > 0
-    then {v; t = (e.t - 1); s=e.s}
-    else {v; t=0; s=(e.s - 1)} in
-
-  let rec go op = 
+    then {v; t = (e.t - 1)}
+    else {v; t=0;} in
+  
+  (* TODO maybe rename to pe or partial_eval*)
+  let rec eval = function
+    | Add (1, e1, e2) ->
+      let* v1 = eval e1 in
+      let* v2 = eval e2 in
+      Result.ok @@ v1 + v2
+    | Lift (s, e) when s <= 1 -> eval e
+    | Expr e when e.t <= 1 -> begin
+        match e.v with
+        | Val v -> Result.ok v
+        | Ident _ -> Result.error "Cannot evaluate identifiers"
+      end
+    | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;
+  in
+  
+  let rec go op =    
     match op with
+    | Add (1, e1, e2)->
+      let* e1' = go e1 in
+      let* e2' = go e2 in    
+      let* v = eval @@ Add (1, e1' , e2') in
+      Result.ok @@ Expr {v=(Val v); t=0}
     | Add (t, e1, e2) ->
       let* e1' = go e1 in
       let* e2' = go e2 in
@@ -87,12 +108,26 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       then Result.ok @@ Add (t-1, e1', e2')
       else Result.error @@ Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'        
     | Expr e when equal_ml_val e.v ident ->
-      Result.ok @@ Expr (decrease_bt e with_val)
-    | Expr e -> Result.ok @@ Expr (decrease_bt e e.v)
+      if e.t = 1
+      then Result.ok @@ Expr (decrease_bt e with_val)
+      else Result.error @@ "ICE. Invalid BT for variable"
+    | Expr e ->
+      Result.ok @@ Expr (decrease_bt e e.v)
     | Fun (a, body) ->
       let* body' = go body in
       Result.ok @@ Fun (a, body')
-    | _ -> Result.ok op    
+    (* Release the inner value. s specializations has occured. *)
+    | Lift (1, e) when bt_of_ops e = 0 ->
+      let* e' = go e in
+      Result.ok e'
+    | Lift (s, e) ->
+      (* In this case, if t=0 and s=0 the expression is just evaluated as is *)
+      let t = bt_of_ops e in
+      let* e' = go e in
+      if t = 0
+      then Result.ok @@ Lift (s-1, e')
+      else Result.ok @@ Lift (s, e')    
+    (* | e -> Result.error @@ "ICE. Unexpected binding times: " ^ show_ml_ops e *)
   in
   go in_op
 (* For all generation functions, they are fully annotated and they have been
@@ -121,18 +156,23 @@ let gen_val ~loc = function
     Ast_builder.Default.eint v ~loc
   | Ident id -> (Ast_builder.Default.evar id ~loc)
 
-let rec cogen ~loc = function
+let rec cogen ~loc op = match op with
   | Add (t, e1, e2) ->
     let t' = (Ast_builder.Default.eint t ~loc)
     and e1' = cogen e1 ~loc        
     and e2' = cogen e2 ~loc in
     [%expr [%plus [%e t'] [%e e1'] [%e e2']]]
-  | Expr e -> 
-      let s = (Ast_builder.Default.eint e.s ~loc) 
-      and t = (Ast_builder.Default.eint e.t ~loc)
-      and expr = gen_val ~loc e.v in
-      [%expr [%lift [%e t] [%e s] [%e expr]]]
-  | Lift e -> cogen e ~loc
+  | Expr e ->
+    let t = Ast_builder.Default.eint e.t ~loc in
+    let expr = gen_val ~loc e.v in
+    [%expr [%lift [%e t] [%e expr]]]
+  | Lift (s, e) ->    
+    let e = match e with
+      | Expr e -> [%expr [%e (gen_val e.v ~loc)]]
+      | _ -> cogen e ~loc
+    and t = Ast_builder.Default.eint ~loc @@ bt_of_ops e 
+    and s' = Ast_builder.Default.eint s ~loc in
+    [%expr [%lift [%e t] [%e s'] [%e e]]]
   | Fun (a, body) ->
     let a' = Ast_builder.Default.ppat_var ~loc (Loc.make ~loc a) in
     let body' = cogen body ~loc in
@@ -141,103 +181,133 @@ let rec cogen ~loc = function
 (* Generate code for the specialization of a function *)
 let bt_of_pexp_desc = function
   | Pexp_constant (Pconst_integer (s, _)) -> int_of_string s
-  | _ ->
-    print_endline "Expected constant of the bt";
-    failwith "
-bt must be a constant"
+  | _ ->    
+    failwith "bt must be a constant"
 
-let create_ml_expr ?(t = 0) ?(s=0) (pexp_desc : expression_desc) =
-  match pexp_desc with
+let create_ml_expr ?(t = 0) (expr : expression) =
+  match expr.pexp_desc with
   | Pexp_constant (Pconst_integer (i, _)) ->
     let v = Val (int_of_string i) in
-    {v; t; s}
+    Some {v; t}
   | Pexp_ident {txt =(Lident var); loc=_loc} ->
-    {v=(Ident var); t; s}
-  | _ ->    
-    failwith "ICE. Cannot create ml_expr from the pexp_desc"
+    Some {v=(Ident var); t}
+  | _ -> None
+    (* print_endline @@ show_exp expr; *)
+    (* failwith "ICE. Cannot create ml_expr from the pexp_desc" *)
       
 module S = Algaeff.State.Make (struct type t = ml_ops end)
 
-let lift_plus t e1 e2 ~traverse = 
+let lift_plus t e1 e2 ~traverse =  
   let _ = traverse e1 in let e1' = S.get () in 
-  let _ = traverse e2 in let e2' = S.get() in
-  S.set @@ Add (bt_of_pexp_desc t.pexp_desc, e1',  e2')
+  let _ = traverse e2 in let e2' = S. get() in
+  let e = Add (bt_of_pexp_desc t.pexp_desc, e1',  e2') in  
+  S.set e
 
 let specialize (to_specialize : expression) (arg : expression) : expression =  
   let lift v ident =
-    object           
-      inherit Ast_traverse.iter as super
+    object (self)        
+      inherit Ast_traverse.iter as _super
 
       (* Traverse the extension notes*)
-      method! extension ext =
-        let (ext_loc, payload) = ext in
-        let _loc = ext_loc.loc in
-        match payload with
-        | PPat (_pat, Some _expr) ->
-          super#extension ext
-        | PStr strct -> begin          
-            match ext_loc.txt with
-            | "plus" -> begin
-                match strct with
-                | [%str [%e? t] [%e? e1] [%e? e2]] ->
-                  lift_plus t e1 e2 ~traverse:(super#expression)
-                | _ ->                
-                  failwith "Incorrect format"
-              end
-            | "lift" -> begin
-                match strct with
-                | [%str [%e? t] [%e? e]] ->
-                  let bt = bt_of_pexp_desc t.pexp_desc in                
-                  let ml_expr = create_ml_expr e.pexp_desc ~t:bt in
-                  S.set (Expr ml_expr)
-                | [%str [%e? t] [%e? s] [%e? e]] ->
-                  let bt = bt_of_pexp_desc t.pexp_desc in
-                  let s' = bt_of_pexp_desc s.pexp_desc in
-                  let ml_expr = create_ml_expr e.pexp_desc ~t:bt ~s:s' in
-                  S.set (Expr ml_expr)
-                | _ -> failwith "incorrect format"
-              end
-            | _ ->
-              failwith "extension not yet implemented"
-          end
-        | _ ->
-          super#extension ext
+      (* method! extension ext = *)
+      (*   print_endline "ext"; *)
+      (*   let (ext_loc, payload) = ext in *)
+      (*   let _loc = ext_loc.loc in *)
+      (*   match payload with *)
+      (*   | PPat (_pat, Some _expr) -> *)
+      (*     super#extension ext *)
+      (*   | PStr strct -> begin           *)
+      (*       match ext_loc.txt with *)
+      (*       | "plus" -> begin *)
+      (*           match strct with *)
+      (*           | [%str [%e? t] [%e? e1] [%e? e2]] -> *)
+      (*             lift_plus t e1 e2 ~traverse:(super#expression) *)
+      (*           | _ ->                 *)
+      (*             failwith "Incorrect format" *)
+      (*         end *)
+      (*       | "lift" -> begin                 *)
+      (*           match strct with *)
+      (*           | [%str [%e? t] [%e? e]] -> *)
+      (*             let bt = bt_of_pexp_desc t.pexp_desc in                 *)
+      (*             let ml_expr = create_ml_expr e ~t:bt in *)
+      (*             S.set (Expr ml_expr) *)
+      (*           | [%str [%e? t] [%e? s] [%e? e]] -> *)
+      (*             let bt = bt_of_pexp_desc t.pexp_desc in *)
+      (*             let s' = bt_of_pexp_desc s.pexp_desc in *)
+      (*             (\* let e' = Expr (create_ml_expr e ~t:bt) in                   *\) *)
+      (*             print_endline @@ "ops: " ^ show_ml_ops (S.get ()); *)
+      (*             super#expression e; *)
+      (*             let e' = S.get () in *)
+      (*             print_endline @@ "epxr: " ^ show_exp e; *)
+      (*             print_endline @@ "ops: " ^ show_ml_ops e'; *)
+      (*             (\* failwith (show_ml_ops e'); *\) *)
+      (*             S.set (Lift (s', e')) *)
+      (*           | _ -> failwith "incorrect format" *)
+      (*         end *)
+      (*       | _ -> *)
+      (*         failwith "extension not yet implemented" *)
+      (*     end *)
+      (*   | _ -> *)
+      (*     super#extension ext *)
       (* Traverse expressions that we try to specialize.
          The expression will either be a function, where we try to specialize
          one of the arguments, or a multilevel expression. The later happens if there
          is only one argument left to sepcialize.*)
       method! expression expr =
-        print_endline @@ "handling expr: " ^ (show_exp expr);
+        (* print_endline @@ "expr: " ^ (show_exp expr); *)
         match expr with
-        | [%expr fun [%p? p] -> [%e? rest]] ->                
-          super#expression rest;
+        | [%expr fun [%p? p] -> [%e? rest]] ->
+          print_endline @@  "arg: " ^ show_pat p;
+          print_endline @@ "body: " ^ show_exp rest;
+          self#expression rest;
           let body = S.get () in
-          print_endline @@ "body: " ^ show_ml_ops body;
           S.set @@ Fun (var_name p.ppat_desc, body);        
           (* TODO: more cases should be handled *)
-        | [%expr [%plus [%e? _t] [%e? _e1] [%e? _e2]]] ->
-          lift_plus _t _e1 _e2 ~traverse:(super#expression)
+        | [%expr [%plus [%e? t] [%e? e1] [%e? e2]]] ->          
+          lift_plus t e1 e2 ~traverse:(self#expression)
+        | [%expr [%lift [%e? t] [%e? e]]] ->
+          let bt = bt_of_pexp_desc t.pexp_desc in
+          let e' = match create_ml_expr e ~t:bt with
+            | Some expr -> Expr expr
+            | None -> self#expression e; S.get ()
+          in
+          (* let e' = create_ml_expr e ~t:bt in *)
+          S.set e'
+        | [%expr [%lift [%e? s] [%e? t] [%e? e]]] ->
+          let bt = bt_of_pexp_desc t.pexp_desc in
+          let s' = bt_of_pexp_desc s.pexp_desc in
+          let e' = match create_ml_expr e ~t:bt with
+            | Some expr -> Expr expr
+            | None -> self#expression e; S.get ()
+          in          
+          S.set (Lift (s', e'))
         | _ ->
           begin          
             match expr.pexp_desc with
             | Pexp_constant (Pconst_integer (s, _)) ->
               let v = int_of_string s in
-              S.set @@ Expr {v=(Val v); t = 0; s = 0}          
+              S.set @@ Expr {v=(Val v); t = 0}
+            (* | Pexp_ident ident_loc -> begin *)
+            (*     match ident_loc.txt with *)
+            (*     | Lident vname -> S.set (Expr {v = (Ident vname); t=0}) *)
+            (*     | _ -> failwith "invalid ident" *)
+            (*   end *)
             | _ ->
-              print_endline @@ "unexpected: " ^ show_exp expr;
-              failwith "not implemented here"
+              failwith @@ "unexpected: " ^ show_exp expr;              
           end
     end
   in
-  let arg_ml_expr = create_ml_expr arg.pexp_desc in
+  (* NOTE: Incorrect result since the arg_ml_expr is never updated *)
+  let arg_ml_expr = match create_ml_expr arg with
+    | Some expr -> expr
+    | None -> failwith "You can only specialize with a constant"
+  in
   let loc = to_specialize.pexp_loc in
   (* Traverse the tree inside an effect handler to collect states *)
   S.run ~init:(Expr arg_ml_expr) (fun () ->
       match to_specialize with
       (* For the function pattern, ident is the argument that is specialized. *)
       | [%expr fun [%p? ident] -> [%e? rest]] -> begin
-          print_endline @@ "args: " ^ show_pat ident;
-          print_endline @@ "rest: " ^ show_exp rest;
           match ident.ppat_desc with
           | Ppat_var ident_loc ->
             let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in
@@ -247,8 +317,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
                 ~with_val:arg_ml_expr.v
                 (S.get ()) in            
             (* After specializing a function, we have to make sure that the
-               arguments to the function are still in scope.*)
-            print_endline @@ "Spec: "^show_ml_ops (Result.get_ok specialization);
+               arguments to the function are still in scope.*)            
             Result.fold
               ~ok:(cogen ~loc)
               ~error:(fail_with ~loc:rest.pexp_loc)
@@ -275,8 +344,7 @@ let map_structure (structure : structure) =
                and build ml_ops. *)
             let fname = loc'.txt in
             let def = { name = fname; expr = expr } in
-            E.modify (fun defs -> def::defs);            
-            (* [%stri let [%p decl]  = failwith "You cannot use this function. Specialize it first"] *)
+            E.modify (fun defs -> def::defs);                        
             [%stri []]
           | _ -> fail_with "invalid multi level declaration" ~loc
         end

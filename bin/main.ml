@@ -1,20 +1,24 @@
 open! Mocaml.Extenders
 
-(* [%%ml] *)
-(* [%%ml let add_ml c b = *)
-(*         [%plus 2 *)
-(*             [%plus 2 *)
-(*                 [%lift 2 c] *)
-(*                 [%lift 2 b]] *)
-(*             [%lift 2 b]]] *)
+(* [%%ml let add_ml a b c = [%plus 3 *)
+(*           [%lift 1 2 *)
+(*               [%plus 2 *)
+(*                   [%lift 1 1 a] *)
+(*                   [%lift 2 b]]] *)
+(*           [%lift 3 c]]] *)
 
 [%%ml let add_ml a b = [%plus 2
-          [%lift 1 1 a]         (* Has binding time t = 1 *)
-          [%lift 2 b]]]         (* Binding time t = 2 *)
+          [%lift 1 1 a]
+          [%lift 2 b]]]
 
 let add = [%run add_ml 4]
-let add2 = [%run add 2]
+let add' = [%run add 2]
+let () =
+  let _res = add 6 in
+  ()
+  (* print_int res; *)
 
-let () =  
-  let add2' = add 2 in
-  Printf.printf "add2: %d add2':%d \n" add2 add2'
+(* [%%ml let foo a = [%lift 1 a]] *)
+(* let res = [%run foo 42] *)
+(* let () =   *)
+(*   print_int res; *)
