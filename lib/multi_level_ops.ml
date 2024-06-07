@@ -34,10 +34,14 @@ and ml_expr = {
 } [@@deriving show]
 
 (* Supported Ops *)
-type ml_ops = Add of int * ml_ops * ml_ops
+type ml_cond = Leq of ml_ops * ml_ops
+             | Bool of bool
+[@@deriving show, eq]
+and ml_ops = Add of int * ml_ops * ml_ops
             | Expr of ml_expr
             | Lift of int * ml_ops
             | Fun of string * ml_ops
+            | IfElse of ml_cond * ml_ops * ml_ops
 [@@deriving show, eq]
 
 module Errors = struct
@@ -69,6 +73,7 @@ let rec bt_of_ops = function
   | Expr {v=_; t} -> t
   | Lift (s, op) -> s + bt_of_ops op
   | Fun (_, body) -> bt_of_ops body
+  | _ -> failwith "Cannot find bt for this expression"
 
 (* This is not really replacing, so much as it is in fact
    the actual specialization. *)
@@ -93,8 +98,20 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       end
     | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;
   in
-  
-  let rec go op =    
+
+  let rec go_cond cond =
+    print_endline @@ "cond: " ^ show_ml_cond cond;
+    match cond with
+    | Leq (e1, e2) ->
+      let* e1' = go e1 in
+      let* e2' = go e2 in
+      if bt_of_ops e1 = bt_of_ops e2 && bt_of_ops e1 = 0
+      then let* v1 = eval e1' in
+        let* v2 = eval e2' in
+        Result.ok @@ Bool (v1 < v2)
+      else Result.ok @@ Leq (e1', e2')
+    | b -> Result.ok b
+  and go op =    
     match op with
     | Add (1, e1, e2)->
       let* e1' = go e1 in
@@ -126,7 +143,20 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       let* e' = go e in
       if t = 0
       then Result.ok @@ Lift (s-1, e')
-      else Result.ok @@ Lift (s, e')    
+      else Result.ok @@ Lift (s, e')
+    | IfElse (cond, e_then, e_else) ->
+      let* cond' = go_cond cond in
+      begin
+        match cond' with
+        | Bool b ->
+          print_endline "cogen bool";
+          if b then go e_then else go e_else
+        | _ ->
+          print_endline "if else cogen";
+          let* e_then' = go e_then in
+          let* e_else' = go e_else in
+          Result.ok @@ IfElse (cond', e_then', e_else')
+      end     
     (* | e -> Result.error @@ "ICE. Unexpected binding times: " ^ show_ml_ops e *)
   in
   go in_op
@@ -177,6 +207,17 @@ let rec cogen ~loc op = match op with
     let a' = Ast_builder.Default.ppat_var ~loc (Loc.make ~loc a) in
     let body' = cogen body ~loc in
     [%expr fun [%p a'] -> [%e body']]
+  | IfElse (cond, e_then, e_else) ->
+    let cond' = match cond with
+      | Leq (e1, e2) ->
+        let e1' = cogen e1 ~loc in
+        let e2' = cogen e2 ~loc in
+        [%expr [%e e1'] < [%e e2']]
+      | _ -> fail_with "unexpected conditional" ~loc
+    in
+    let e_then' = cogen e_then ~loc in
+    let e_else' = cogen e_else ~loc in
+    [%expr if [%e cond'] then [%e e_then'] else [%e e_else']]
 
 (* Generate code for the specialization of a function *)
 let bt_of_pexp_desc = function
@@ -227,8 +268,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           let e' = match create_ml_expr e ~t:bt with
             | Some expr -> Expr expr
             | None -> self#expression e; S.get ()
-          in
-          (* let e' = create_ml_expr e ~t:bt in *)
+          in          
           S.set e'
         | [%expr [%lift [%e? s] [%e? t] [%e? e]]] ->
           let bt = bt_of_pexp_desc t.pexp_desc in
@@ -238,7 +278,21 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
             | None -> self#expression e; S.get ()
           in          
           S.set (Lift (s', e'))
+        | [%expr if [%e? e1] < [%e? e2] then [%e? b1] else [%e? b2]] ->
+          print_endline "if expression";
+          self#expression e1;
+          let e1' = S.get () in
+          self#expression e2;
+          let e2' = S.get () in
+          self#expression b1;
+          let b1' = S.get () in
+          self#expression b2;
+          let b2' = S.get () in
+          (* TODO: Fix here becuase e1'=e2' *)
+          let cond = Leq (e1', e2') in
+          S.set (IfElse (cond, b1', b2'))          
         | _ ->
+          print_endline @@ "expr: " ^ show_exp expr;
           _super#expression expr;          
     end
   in
