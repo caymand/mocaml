@@ -220,7 +220,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           self#expression rest;
           let body = S.get () in
           S.set @@ Fun (var_name p.ppat_desc, body);        
-          (* TODO: more cases should be handled *)
         | [%expr [%plus [%e? t] [%e? e1] [%e? e2]]] ->          
           lift_plus t e1 e2 ~traverse:(self#expression)
         | [%expr [%lift [%e? t] [%e? e]]] ->
@@ -240,19 +239,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           in          
           S.set (Lift (s', e'))
         | _ ->
-          begin          
-            match expr.pexp_desc with
-            | Pexp_constant (Pconst_integer (s, _)) ->
-              let v = int_of_string s in
-              S.set @@ Expr {v=(Val v); t = 0}
-            (* | Pexp_ident ident_loc -> begin *)
-            (*     match ident_loc.txt with *)
-            (*     | Lident vname -> S.set (Expr {v = (Ident vname); t=0}) *)
-            (*     | _ -> failwith "invalid ident" *)
-            (*   end *)
-            | _ ->
-              failwith @@ "unexpected: " ^ show_exp expr;              
-          end
+          _super#expression expr;          
     end
   in
   (* NOTE: Incorrect result since the arg_ml_expr is never updated *)
