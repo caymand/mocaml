@@ -190,22 +190,22 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
    specialized. Therefore, we could also do binding time analysis on these.*)
 
 
-let gen_binop ~ctxt ~oper expr =
+let gen_binop ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   match expr with
   | [%expr [%e? t] [%e? e1] [%e? e2]] ->
     (* TODO: Consider binding times *)
-    [%expr [%p oper] [%e e1] [%e e2]]
+    [%expr [%e e1] + [%e e2]]
   | e ->
     let msg = Printf.sprintf
         "failed generating code for: %s"
         (show_exp e) in
     fail_with msg ~loc
 
-let gen_plus ~ctxt = gen_binop ~ctxt ~oper:(Int.add)
-let gen_sub ~ctxt = gen_binop ~ctxt ~oper:(Int.sub)
-let gen_div ~ctxt = gen_binop ~ctxt ~oper:(Int.div)
-let gen_mul ~ctxt = gen_binop ~ctxt ~oper:(Int.mul)
+let gen_plus ~ctxt = gen_binop ~ctxt
+(* let gen_sub ~ctxt = gen_binop ~ctxt ~oper:(Int.sub) *)
+(* let gen_div ~ctxt = gen_binop ~ctxt ~oper:(Int.div) *)
+(* let gen_mul ~ctxt = gen_binop ~ctxt ~oper:(Int.mul) *)
 
 let gen_lift ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
