@@ -37,11 +37,16 @@ and ml_expr = {
 type ml_cond = Leq of ml_ops * ml_ops
              | Bool of bool
 [@@deriving show, eq]
-and ml_ops = Add of int * ml_ops * ml_ops
-            | Expr of ml_expr
-            | Lift of int * ml_ops
-            | Fun of string * ml_ops
-            | IfElse of ml_cond * ml_ops * ml_ops
+and ml_binop = Add of ml_ops * ml_ops
+             | Sub of ml_ops * ml_ops
+             | Mul of ml_ops * ml_ops
+             | Div of ml_ops * ml_ops
+[@@deriving show, eq]                      
+and ml_ops = Binop of int * ml_binop
+           | Expr of ml_expr
+           | Lift of int * ml_ops
+           | Fun of string * ml_ops
+           | IfElse of ml_cond * ml_ops * ml_ops
 [@@deriving show, eq]
 
 module Errors = struct
@@ -68,37 +73,55 @@ let var_name = function
   | Ppat_var ident -> ident.txt
   | _ -> failwith "Only normal functions fun x -> body can be specialized"
 
+
 let rec bt_of_ops = function
-  | Add (t, _, _) -> t
+  | Binop (t, _binop) -> t
   | Expr {v=_; t} -> t
   | Lift (s, op) -> s + bt_of_ops op
   | Fun (_, body) -> bt_of_ops body
   | _ -> failwith "Cannot find bt for this expression"
 
+let construct_binop = function
+    | Add (e1, e2) -> (e1, e2, fun (e1', e2') -> Add (e1', e2'))
+    | Sub (e1, e2) -> (e1, e2, fun (e1', e2') -> Sub (e1', e2'))
+    | Div (e1, e2) -> (e1, e2, fun (e1', e2') -> Div (e1', e2'))
+    | Mul (e1, e2) -> (e1, e2, fun (e1', e2') -> Mul (e1', e2'))
+
 (* This is not really replacing, so much as it is in fact
-   the actual specialization. *)
+   the actual specialization.   
+*)
 let replace ~ident ~with_val in_op = let (let*) = Result.bind in
   (* TODO:FIXME *)
   let decrease_bt e v =
     if e.t > 0
     then {v; t = (e.t - 1)}
     else {v; t=0;} in
+
   
   (* TODO maybe rename to pe or partial_eval*)
   let rec eval = function
-    | Add (1, e1, e2) ->
-      let* v1 = eval e1 in
-      let* v2 = eval e2 in
-      Result.ok @@ v1 + v2
+    | Binop (1, binop) ->
+      eval_binop binop
     | Lift (s, e) when s <= 1 -> eval e
     | Expr e when e.t <= 1 -> begin
         match e.v with
         | Val v -> Result.ok v
         | Ident _ -> Result.error "Cannot evaluate identifiers"
       end
-    | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;
+    | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;  
+  and eval_binop binop =
+    let eval_binop' e1 e2 (oper : int -> int -> int) =
+      let* v1 = eval e1 in
+      let* v2 = eval e2 in
+      Result.ok @@ oper v1 v2
+    in
+    match binop with
+    | Add (e1, e2) -> eval_binop' e1 e2 Int.add
+    | Sub (e1, e2) -> eval_binop' e1 e2 Int.sub
+    | Mul (e1, e2) -> eval_binop' e1 e2 Int.mul
+    | Div (e1, e2) -> eval_binop' e1 e2 Int.div
   in
-
+  
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->
@@ -110,24 +133,27 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
         let* v2 = eval e2' in
         Result.ok @@ Bool (v1 < v2)
       else Result.ok @@ Leq (e1', e2')
-    | b -> Result.ok b
+    | b -> Result.ok b  
   and go op =    
     match op with
-    | Add (1, e1, e2)->
-      let* e1' = go e1 in
-      let* e2' = go e2 in    
-      let* v = eval @@ Add (1, e1' , e2') in
-      Result.ok @@ Expr {v=(Val v); t=0}
-    | Add (t, e1, e2) ->
+    | Binop (1, binop)->
+      let (e1, e2, make_binop) = construct_binop binop in
       let* e1' = go e1 in
       let* e2' = go e2 in
-      if (bt_of_ops e1') = (bt_of_ops e2') 
-      then Result.ok @@ Add (t-1, e1', e2')
-      else Result.error @@ Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'        
+      let* v = eval @@ Binop (1, make_binop (e1', e2')) in
+      Result.ok @@ Expr {v=(Val v); t=0}
+    | Binop (t, binop) ->
+      let (e1, e2, make_binop) = construct_binop binop in
+      let* e1' = go e1 in
+      let* e2' = go e2 in
+      if (bt_of_ops e1') = (bt_of_ops e2')
+      then Result.ok @@ Binop (t-1, make_binop (e1', e2'))
+      else Result.error @@ Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'      
     | Expr e when equal_ml_val e.v ident ->
-      if e.t = 1
-      then Result.ok @@ Expr (decrease_bt e with_val)
-      else Result.error @@ "ICE. Invalid BT for variable"
+      Result.ok @@ Expr (decrease_bt e with_val)
+      (* if e.t = 1 *)
+      (* then Result.ok @@ Expr (decrease_bt e with_val) *)
+      (* else Result.error @@ "ICE. Invalid BT for variable" *)
     | Expr e ->
       Result.ok @@ Expr (decrease_bt e e.v)
     | Fun (a, body) ->
@@ -151,10 +177,8 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       begin
         match cond' with
         | Bool b ->
-          print_endline "cogen bool";
           if b then go e_then else go e_else
         | _ ->
-          print_endline "if else cogen";
           let* e_then' = go e_then in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
@@ -164,17 +188,24 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
   go in_op
 (* For all generation functions, they are fully annotated and they have been
    specialized. Therefore, we could also do binding time analysis on these.*)
-let gen_plus ~ctxt expr =
+
+
+let gen_binop ~ctxt ~oper expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   match expr with
   | [%expr [%e? t] [%e? e1] [%e? e2]] ->
     (* TODO: Consider binding times *)
-    [%expr [%e e1] + [%e e2]]
+    [%expr [%p oper] [%e e1] [%e e2]]
   | e ->
     let msg = Printf.sprintf
-        "failed generating code for plus: %s"
+        "failed generating code for: %s"
         (show_exp e) in
     fail_with msg ~loc
+
+let gen_plus ~ctxt = gen_binop ~ctxt ~oper:(Int.add)
+let gen_sub ~ctxt = gen_binop ~ctxt ~oper:(Int.sub)
+let gen_div ~ctxt = gen_binop ~ctxt ~oper:(Int.div)
+let gen_mul ~ctxt = gen_binop ~ctxt ~oper:(Int.mul)
 
 let gen_lift ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
@@ -189,11 +220,22 @@ let gen_val ~loc = function
   | Ident id -> (Ast_builder.Default.evar id ~loc)
 
 let rec cogen ~loc op = match op with
-  | Add (t, e1, e2) ->
-    let t' = (Ast_builder.Default.eint t ~loc)
-    and e1' = cogen e1 ~loc        
-    and e2' = cogen e2 ~loc in
-    [%expr [%plus [%e t'] [%e e1'] [%e e2']]]
+  (* | Add (t, e1, e2) -> *)
+  | Binop (t, binop) ->
+    let (e1, e2, _) = construct_binop binop in
+    let t' = (Ast_builder.Default.eint t ~loc) in
+    let e1' = cogen e1 ~loc in
+    let e2' = cogen e2 ~loc in
+    begin match binop with
+      | Add _ ->
+        [%expr [%plus [%e t'] [%e e1'] [%e e2']]]
+      | Sub _ ->
+        [%expr [%sub [%e t'] [%e e1'] [%e e2']]]
+      | Div _ ->
+        [%expr [%div [%e t'] [%e e1'] [%e e2']]]
+      | Mul _ ->
+        [%expr [%mul [%e t'] [%e e1'] [%e e2']]]
+    end
   | Expr e ->
     let t = Ast_builder.Default.eint e.t ~loc in
     let expr = gen_val ~loc e.v in
@@ -240,10 +282,10 @@ let create_ml_expr ?(t = 0) (expr : expression) =
       
 module S = Algaeff.State.Make (struct type t = ml_ops end)
 
-let lift_plus t e1 e2 ~traverse =  
+let lift_binop t e1 e2 ~traverse ~binop =  
   let _ = traverse e1 in let e1' = S.get () in 
   let _ = traverse e2 in let e2' = S. get() in
-  let e = Add (bt_of_pexp_desc t.pexp_desc, e1',  e2') in  
+  let e = Binop (bt_of_pexp_desc t.pexp_desc, binop (e1',  e2')) in  
   S.set e
 
 let specialize (to_specialize : expression) (arg : expression) : expression =  
@@ -264,7 +306,21 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           let body = S.get () in
           S.set @@ Fun (var_name p.ppat_desc, body);        
         | [%expr [%plus [%e? t] [%e? e1] [%e? e2]]] ->          
-          lift_plus t e1 e2 ~traverse:(self#expression)
+          lift_binop t e1 e2
+            ~traverse:(self#expression)
+            ~binop:(fun (e1', e2') -> Add (e1', e2'))
+        | [%expr [%sub [%e? t] [%e? e1] [%e? e2]]] ->          
+          lift_binop t e1 e2
+            ~traverse:(self#expression)
+            ~binop:(fun (e1', e2') -> Sub (e1', e2'))
+        | [%expr [%mul [%e? t] [%e? e1] [%e? e2]]] ->          
+          lift_binop t e1 e2
+            ~traverse:(self#expression)
+            ~binop:(fun (e1', e2') -> Mul (e1', e2'))
+        | [%expr [%div [%e? t] [%e? e1] [%e? e2]]] ->          
+          lift_binop t e1 e2
+            ~traverse:(self#expression)
+            ~binop:(fun (e1', e2') -> Div (e1', e2'))
         | [%expr [%lift [%e? t] [%e? e]]] ->
           let bt = bt_of_pexp_desc t.pexp_desc in
           let e' = match create_ml_expr e ~t:bt with
@@ -290,10 +346,10 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           let b1' = S.get () in
           self#expression b2;
           let b2' = S.get () in
-          (* TODO: Fix here becuase e1'=e2' *)
           let cond = Leq (e1', e2') in
           S.set (IfElse (cond, b1', b2'))          
         | _ ->
+          (* TODO: Consider making this an escape that just inserts the expression *)
           print_endline @@ "expr: " ^ show_exp expr;
           _super#expression expr;          
     end
