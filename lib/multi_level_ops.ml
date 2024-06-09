@@ -36,18 +36,23 @@ and ml_expr = {
 (* Supported Ops *)
 type ml_cond = Leq of ml_ops * ml_ops
              | Bool of bool
-[@@deriving show, eq]
+[@@deriving show]
 and ml_binop = Add of ml_ops * ml_ops
              | Sub of ml_ops * ml_ops
              | Mul of ml_ops * ml_ops
              | Div of ml_ops * ml_ops
-[@@deriving show, eq]                      
+[@@deriving show]                      
 and ml_ops = Binop of int * ml_binop
            | Expr of ml_expr
            | Lift of int * ml_ops
            | Fun of string * ml_ops
            | IfElse of ml_cond * ml_ops * ml_ops
-[@@deriving show, eq]
+           | App of expression * (ml_ops list)
+[@@deriving show]
+(* and escp_env = { *)
+(*   ident : string; *)
+(*   op    : ml_ops *)
+(* } *)
 
 module Errors = struct
   let invalid_binding_times ~e1 ~e2 ~e1' ~e2' =
@@ -96,7 +101,6 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
     if e.t > 0
     then {v; t = (e.t - 1)}
     else {v; t=0;} in
-
   
   (* TODO maybe rename to pe or partial_eval*)
   let rec eval = function
@@ -124,8 +128,7 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
   
   let rec go_cond cond =    
     match cond with
-    | Leq (e1, e2) ->
-      print_endline @@ "cond: " ^ show_ml_cond cond;
+    | Leq (e1, e2) ->      
       let* e1' = go e1 in
       let* e2' = go e2 in      
       if bt_of_ops e1' = bt_of_ops e2' && bt_of_ops e1' = 0
@@ -171,8 +174,6 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       then Result.ok @@ Lift (s-1, e')
       else Result.ok @@ Lift (s, e')
     | IfElse (cond, e_then, e_else) ->
-      (* print_endline "if then else"; *)
-      (* print_endline @@ show_ml_ops op; *)
       let* cond' = go_cond cond in
       begin
         match cond' with
@@ -182,30 +183,41 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
           let* e_then' = go e_then in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
-      end     
-    (* | e -> Result.error @@ "ICE. Unexpected binding times: " ^ show_ml_ops e *)
+      end
+    | App (fn, args) ->      
+      let rec go_args acc = function
+        | [] -> Result.ok acc
+        | (Ok arg)::tl -> go_args (arg::acc) tl
+        | (Error msg)::_ -> Error msg in
+      let* args' = go_args [] (List.map go args |> List.rev) in
+      Result.ok @@ App (fn, args')
   in
   go in_op
-(* For all generation functions, they are fully annotated and they have been
-   specialized. Therefore, we could also do binding time analysis on these.*)
 
-
-let gen_binop ~ctxt expr =
+let gen_binop ~ctxt ~oper expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
   match expr with
-  | [%expr [%e? t] [%e? e1] [%e? e2]] ->
+  | [%expr [%e? t] [%e? e1] [%e? e2]] ->    
     (* TODO: Consider binding times *)
-    [%expr [%e e1] + [%e e2]]
+    [%expr [%e oper] [%e e1] [%e e2]]
   | e ->
     let msg = Printf.sprintf
         "failed generating code for: %s"
         (show_exp e) in
     fail_with msg ~loc
 
-let gen_plus ~ctxt = gen_binop ~ctxt
-(* let gen_sub ~ctxt = gen_binop ~ctxt ~oper:(Int.sub) *)
-(* let gen_div ~ctxt = gen_binop ~ctxt ~oper:(Int.div) *)
-(* let gen_mul ~ctxt = gen_binop ~ctxt ~oper:(Int.mul) *)
+let gen_add ~ctxt =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  gen_binop ~ctxt ~oper:[%expr Int.add]
+let gen_sub ~ctxt =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  gen_binop ~ctxt ~oper:[%expr Int.sub]
+let gen_div ~ctxt =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  gen_binop ~ctxt ~oper:[%expr Int.div]
+let gen_mul ~ctxt =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  gen_binop ~ctxt ~oper:[%expr Int.mul]
 
 let gen_lift ~ctxt expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
@@ -228,7 +240,7 @@ let rec cogen ~loc op = match op with
     let e2' = cogen e2 ~loc in
     begin match binop with
       | Add _ ->
-        [%expr [%plus [%e t'] [%e e1'] [%e e2']]]
+        [%expr [%add [%e t'] [%e e1'] [%e e2']]]
       | Sub _ ->
         [%expr [%sub [%e t'] [%e e1'] [%e e2']]]
       | Div _ ->
@@ -262,6 +274,9 @@ let rec cogen ~loc op = match op with
     let e_then' = cogen e_then ~loc in
     let e_else' = cogen e_else ~loc in
     [%expr if [%e cond'] then [%e e_then'] else [%e e_else']]
+  | App (fn, args) ->
+    let arg_labels = List.map (fun arg -> (Nolabel, cogen arg ~loc)) args in
+    Ast_builder.Default.pexp_apply fn arg_labels ~loc
 
 (* Generate code for the specialization of a function *)
 let bt_of_pexp_desc = function
@@ -297,15 +312,14 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
          one of the arguments, or a multilevel expression. The later happens if there
          is only one argument left to sepcialize.*)
       method! expression expr =
-        (* print_endline @@ "expr: " ^ (show_exp expr); *)
         match expr with
         | [%expr fun [%p? p] -> [%e? rest]] ->
-          print_endline @@  "arg: " ^ show_pat p;
-          print_endline @@ "body: " ^ show_exp rest;
+          (* print_endline @@  "arg: " ^ show_pat p; *)
+          (* print_endline @@ "body: " ^ show_exp rest; *)
           self#expression rest;
           let body = S.get () in
           S.set @@ Fun (var_name p.ppat_desc, body);        
-        | [%expr [%plus [%e? t] [%e? e1] [%e? e2]]] ->          
+        | [%expr [%add [%e? t] [%e? e1] [%e? e2]]] ->          
           lift_binop t e1 e2
             ~traverse:(self#expression)
             ~binop:(fun (e1', e2') -> Add (e1', e2'))
@@ -323,17 +337,23 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
             ~binop:(fun (e1', e2') -> Div (e1', e2'))
         | [%expr [%lift [%e? t] [%e? e]]] ->
           let bt = bt_of_pexp_desc t.pexp_desc in
+          (* Try to lift either constant or ident.
+             In case that fails, recursively lift the sub expression*)
+          (* print_endline @@ "before lift " ^ show_ml_ops (S.get ()); *)
           let e' = match create_ml_expr e ~t:bt with
             | Some expr -> Expr expr
-            | None -> self#expression e; S.get ()
-          in          
-          S.set e'
+            | None -> _super#expression e; S.get () (* TODO: super or self *)
+          in
+          S.set e';
+          (* print_endline @@ "after lift " ^ show_ml_ops (S.get ()); *)
         | [%expr [%lift [%e? s] [%e? t] [%e? e]]] ->
           let bt = bt_of_pexp_desc t.pexp_desc in
           let s' = bt_of_pexp_desc s.pexp_desc in
           let e' = match create_ml_expr e ~t:bt with
             | Some expr -> Expr expr
-            | None -> self#expression e; S.get ()
+            | None ->
+              failwith "not now"
+              (* self#expression e; S.get () *)
           in          
           S.set (Lift (s', e'))
         | [%expr if [%e? e1] < [%e? e2] then [%e? b1] else [%e? b2]] ->
@@ -343,15 +363,27 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           self#expression e2;
           let e2' = S.get () in
           self#expression b1;
-          let b1' = S.get () in
+          let e_then = S.get () in
           self#expression b2;
-          let b2' = S.get () in
+          let e_else = S.get () in
           let cond = Leq (e1', e2') in
-          S.set (IfElse (cond, b1', b2'))          
-        | _ ->
-          (* TODO: Consider making this an escape that just inserts the expression *)
-          print_endline @@ "expr: " ^ show_exp expr;
-          _super#expression expr;          
+          S.set (IfElse (cond, e_then, e_else))        
+        (* The last case can be any OCaml expression. However thse might
+           still possibly contain ML ops.*)        
+        | [%expr [%app [%e? t] [%e? fn_app]]] -> begin
+            match fn_app.pexp_desc with
+            | Pexp_apply (fn, args) ->
+              let args_op = List.map (fun (_, expr) ->
+                  self#expression expr;
+                  S.get () ) args
+              in
+              S.set @@ App (fn, args_op);
+            | _ ->
+              failwith "Only use function application inside app extension."
+          end
+        | _ -> failwith @@ "Expression no implemented: " ^ show_exp expr;
+          (* TODO: Consider making this an escape that just inserts the expression *)          
+          (* TODO: Maybe also match run in here and possibly ml definitions. *)                    
     end
   in
   (* NOTE: Incorrect result since the arg_ml_expr is never updated *)
@@ -369,6 +401,8 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | Ppat_var ident_loc ->
             let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in
             lift_body#expression rest;
+            print_endline "LIFTET:";
+            print_endline @@ show_ml_ops (S.get ());
             let specialization = replace
                 ~ident:(Ident ident_loc.txt)
                 ~with_val:arg_ml_expr.v

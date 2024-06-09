@@ -1,3 +1,5 @@
 (test
  (name test_mocaml)
- (preprocess (pps mocaml)))
+ (preprocess (pps mocaml))
+ (libraries mocaml)
+ (flags (:standard -w -32 -warn-error -32)))
