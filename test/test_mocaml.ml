@@ -4,7 +4,20 @@ open! Mocaml.Extenders
 [%%ml let sub a b = [%sub 2 [%lift 1 1 a] [%lift 2 b]]]
 [%%ml let div a b = [%div 2 [%lift 1 1 a] [%lift 2 b]]]
 [%%ml let mul a b = [%mul 2 [%lift 1 1 a] [%lift 2 b]]]
+[%%ml let branch a b =
+        if [%lift 1 a] < [%lift 1 1]
+        then [%lift 2 b]
+        else [%lift 1 1 a]
+]
 
+[%%ml let sum_ml n =
+        if  [%lift 1 n] < [%lift 1 1]
+        then [%lift 1 0]
+        else
+          [%add 1
+              [%lift 1 n]
+              [%app 1 (sum [%sub 1 [%lift 1 n] [%lift 1 1]])]]
+]
 let add' = [%run add 40]
 let add_res = [%run add' 2]
 let sub' = [%run sub 44]
@@ -13,6 +26,13 @@ let div' = [%run div 84]
 let div_res = [%run div' 2]
 let mul' = [%run mul 21]
 let mul_res = [%run mul' 2]
+
+let sum_res = [%run sum_ml 5]
+
+let branch_else = [%run branch 42]
+let branch_then = [%run branch 0]
+
+(* TODO: Test for binding times of branches *)
 
 let match_tests ~actual ~expected =
   Array.iter2 (fun expected actual ->
@@ -24,7 +44,10 @@ let match_tests ~actual ~expected =
     actual
 
 let () =
-  let actuals = Array.of_list [add_res; sub_res; div_res; mul_res] in
+  let actuals_arith = Array.of_list [add_res; sub_res; div_res; mul_res] in
   match_tests
-    ~actual:actuals
-    ~expected:(Array.make (Array.length actuals) 42)
+    ~actual:actuals_arith
+    ~expected:(Array.make (Array.length actuals_arith) 42);
+  match_tests
+    ~actual:[|branch_else 0; branch_then 42; sum_res|]
+    ~expected:[|42; 42; 15|]

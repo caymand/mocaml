@@ -30,12 +30,8 @@ and ml_ops = Binop of int * ml_binop
            | Lift of int * ml_ops
            | Fun of string * ml_ops
            | IfElse of ml_cond * ml_ops * ml_ops
-           | App of expression * (ml_ops list)
+           | App of int * expression * (ml_ops list)
 [@@deriving show]
-(* and escp_env = { *)
-(*   ident : string; *)
-(*   op    : ml_ops *)
-(* } *)
 
 module Errors = struct
   let invalid_binding_times ~e1 ~e2 ~e1' ~e2' =
@@ -88,5 +84,3 @@ let create_ml_expr ?(t = 0) (expr : expression) =
   | Pexp_ident {txt =(Lident var); loc=_loc} ->
     Some {v=(Ident var); t}
   | _ -> None
-    (* print_endline @@ show_exp expr; *)
-    (* failwith "ICE. Cannot create ml_expr from the pexp_desc" *)         

@@ -121,3 +121,133 @@ let add = [%run 40 add_ml] = fun b -> [%plus 1
                                        [%lift 1 b]]
 [%run 2 add] = 42
 ```
+
+# Recursion
+
+Lets say I have the following operation:
+
+```
+(Multi_level_ops.IfElse (
+   (Multi_level_ops.Leq (
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Ident "n"); t = 1 }),
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+      )),
+   (Multi_level_ops.Expr
+      { Multi_level_ops.v = (Multi_level_ops.Val 0); t = 1 }),
+   (Multi_level_ops.Binop (1,
+      (Multi_level_ops.Add (
+         (Multi_level_ops.Expr
+            { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 }),
+         (Multi_level_ops.App (1, sum,
+            [(Multi_level_ops.Binop (1,
+                (Multi_level_ops.Sub (
+                   (Multi_level_ops.Expr
+                      { Multi_level_ops.v = (Multi_level_ops.Ident "n");
+                        t = 1 }),
+                   (Multi_level_ops.Expr
+                      { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+                   ))
+                ))
+              ]
+            ))
+         ))
+      ))
+   ))
+```
+
+One transformation that could be done is:
+
+```
+(Multi_level_ops.IfElse (
+   (Multi_level_ops.Leq (
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Ident "n"); t = 1 }),
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+      )),
+   (Multi_level_ops.Expr
+      { Multi_level_ops.v = (Multi_level_ops.Val 0); t = 1 }),
+   (Multi_level_ops.Binop (1,
+      (Multi_level_ops.Add (
+         (Multi_level_ops.Expr
+            { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 }),
+		 (* Insert the function again *)
+         (Multi_level_ops.IfElse (
+			 (Multi_level_ops.Leq (
+				(Multi_level_ops.Expr
+				   { Multi_level_ops.v = (Multi_level_ops.Ident "n"); t = 1 }),
+				(Multi_level_ops.Expr
+				   { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+				)),
+			 (Multi_level_ops.Expr
+				{ Multi_level_ops.v = (Multi_level_ops.Val 0); t = 1 }),
+			 (Multi_level_ops.Binop (1,
+				(Multi_level_ops.Add (
+				   (Multi_level_ops.Expr
+					  { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 }),
+				   (Multi_level_ops.App (1, sum,
+					  [(Multi_level_ops.Binop (1,
+						  (Multi_level_ops.Sub (
+							 (Multi_level_ops.Expr
+								{ Multi_level_ops.v = (Multi_level_ops.Ident "n");
+								  t = 1 }),
+							 (Multi_level_ops.Expr
+								{ Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+							 ))
+						  ))
+						]
+					  ))
+				   ))
+				))
+			 ))
+         ))
+      ))
+   ))
+```
+
+This would continue until the expression can be evaluated.
+
+How can this expression be handled:
+
+```ocaml
+[%%ml let foo a b =
+	if [%lift 1 a] < [%lift 1 1]
+	then [%lift 2 b]
+	else [%app 2 (foo (a-1) b )] (* should have lift on a and b *)
+]
+```
+
+When we specialize this w.r.t `a` then we get a new function `mul b -> ...`. So
+first we would transform this into something like
+
+```
+(Multi_level_ops.IfElse (
+   (Multi_level_ops.Leq (
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Ident "n"); t = 1 }),
+      (Multi_level_ops.Expr
+         { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+      )),
+   (Multi_level_ops.Expr
+      { Multi_level_ops.v = (Multi_level_ops.Val 0); t = 1 }),
+   (Multi_level_ops.App (1, sum,
+       [(Multi_level_ops.Binop (1,
+           (Multi_level_ops.Sub (
+               (Multi_level_ops.Expr
+                   { Multi_level_ops.v = (Multi_level_ops.Ident "n");
+                       t = 1 }),
+               (Multi_level_ops.Expr
+                   { Multi_level_ops.v = (Multi_level_ops.Val 1); t = 1 })
+                   ))
+                ))
+              ]
+            ))
+         ))
+      ))
+   ))
+```
+Then we start specializing and we can remove the branch. We continue and
+eventually hit the application (a recursive call). We need to treat this as its
+own new function and generate code.

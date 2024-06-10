@@ -9,22 +9,25 @@ let lift_binop t e1 e2 ~traverse ~binop =
   let e = Binop (bt_of_pexp_desc t.pexp_desc, binop (e1',  e2')) in  
   S.set e
 
-let replace ~ident ~with_val in_op = let (let*) = Result.bind in
-  (* TODO:FIXME *)
+let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
   let decrease_bt e v =
     if e.t > 0
     then {v; t = (e.t - 1)}
     else {v; t=0;} in
-  
-  (* TODO maybe rename to pe or partial_eval*)
+
   let rec eval = function
     | Binop (1, binop) ->
       eval_binop binop
     | Lift (s, e) when s <= 1 -> eval e
     | Expr e when e.t <= 1 -> begin
         match e.v with
-        | Val v -> Result.ok v
-        | Ident _ -> Result.error "Cannot evaluate identifiers"
+        | Val v -> Result.ok v        
+        | ident' when equal_ml_val ident' ident  -> begin
+            match with_val with
+            | Ident _ -> Result.error ("Impossible")
+            | Val v -> Result.ok v
+          end
+        | _ -> Result.error @@ "Cannot evaluate identifiers: " ^ show_ml_val e.v
       end
     | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;  
   and eval_binop binop =
@@ -39,7 +42,13 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Mul (e1, e2) -> eval_binop' e1 e2 Int.mul
     | Div (e1, e2) -> eval_binop' e1 e2 Int.div
   in
-  
+
+  (* TODO: Could directly call go *)
+  (* let rec go_args acc = function *)
+  (*   | [] -> Result.ok acc *)
+  (*   | (Ok arg)::tl -> go_args (arg::acc) tl *)
+  (*   | (Error msg)::_ -> Error msg *)
+  (* in   *)
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->      
@@ -56,8 +65,8 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Binop (1, binop)->
       let (e1, e2, make_binop) = construct_binop binop in
       let* e1' = go e1 in
-      let* e2' = go e2 in
-      let* v = eval @@ Binop (1, make_binop (e1', e2')) in
+      let* e2' = go e2 in      
+      let* v = eval @@ Binop (1, make_binop (e1', e2')) in      
       Result.ok @@ Expr {v=(Val v); t=0}
     | Binop (t, binop) ->
       let (e1, e2, make_binop) = construct_binop binop in
@@ -68,9 +77,9 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
       else Result.error @@ Multi_level_ops.Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'      
     | Expr e when equal_ml_val e.v ident ->
       Result.ok @@ Expr (decrease_bt e with_val)
-      (* if e.t = 1 *)
-      (* then Result.ok @@ Expr (decrease_bt e with_val) *)
-      (* else Result.error @@ "ICE. Invalid BT for variable" *)
+    (* if e.t = 1 *)
+    (* then Result.ok @@ Expr (decrease_bt e with_val) *)
+    (* else Result.error @@ "ICE. Invalid BT for variable" *)
     | Expr e ->
       Result.ok @@ Expr (decrease_bt e e.v)
     | Fun (a, body) ->
@@ -98,13 +107,17 @@ let replace ~ident ~with_val in_op = let (let*) = Result.bind in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
       end
-    | App (fn, args) ->      
-      let rec go_args acc = function
-        | [] -> Result.ok acc
-        | (Ok arg)::tl -> go_args (arg::acc) tl
-        | (Error msg)::_ -> Error msg in
-      let* args' = go_args [] (List.map go args |> List.rev) in
-      Result.ok @@ App (fn, args')
+    | App (1, fn, args) ->
+      let* arg = if List.length args < 1
+        then Result.error "invalid application"
+        else Result.ok (List.hd args)
+      in
+      let* v = Result.bind(eval arg) (fun v -> Result.ok @@ Val v) in
+      let* app' = replace ~ident ~with_val:v in_op in
+      let* v = eval app' in 
+      Result.ok @@ Expr {v=(Val v);t=0}
+    | App (t, fn, args) ->
+      Result.error "Not implemented"
   in
   go in_op
 
@@ -168,7 +181,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           self#expression e2;
           let e2' = S.get () in
           self#expression b1;
-          let e_then = S.get () in
+          let e_then = S.get () in          
           self#expression b2;
           let e_else = S.get () in
           let cond = Leq (e1', e2') in
@@ -178,15 +191,17 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
         | [%expr [%app [%e? t] [%e? fn_app]]] -> begin
             match fn_app.pexp_desc with
             | Pexp_apply (fn, args) ->
-              let args_op = List.map (fun (_, expr) ->
+              let bt = bt_of_pexp_desc t.pexp_desc
+              and args_op = List.map (fun (_, expr) ->
                   self#expression expr;
                   S.get () ) args
               in
-              S.set @@ App (fn, args_op);
+              S.set @@ App (bt, fn, args_op);
             | _ ->
-              failwith "Expecte function application: [%app t fn (args)]."
+              failwith "Expected function application: [%app t fn (args)]."
           end
-        | _ -> failwith @@ "Expression no implemented: " ^ Pprinter.show_exp expr;
+        | _ -> failwith @@ "Expression no implemented: " ^ (Pprintast.string_of_expression expr);
+                           (* Pprinter.show_exp expr; *)
           (* TODO: Consider making this an escape that just inserts the expression *)          
           (* TODO: Maybe also match run in here and possibly ml definitions. *)                    
     end
@@ -206,14 +221,13 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           | Ppat_var ident_loc ->
             let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in
             lift_body#expression rest;
-            print_endline "LIFTET:";
-            print_endline @@ show_ml_ops (S.get ());
             let specialization = replace
                 ~ident:(Ident ident_loc.txt)
                 ~with_val:arg_ml_expr.v
                 (S.get ()) in            
             (* After specializing a function, we have to make sure that the
-               arguments to the function are still in scope.*)            
+               arguments to the function are still in scope.*)
+            (* print_endline @@ show_ml_ops (Result.get_ok specialization); *)
             Result.fold
               ~ok:(Codegen.cogen ~loc)
               ~error:(Codegen.fail_with ~loc:rest.pexp_loc)

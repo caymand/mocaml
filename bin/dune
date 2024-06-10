@@ -1,6 +1,7 @@
 (executable
  (public_name mocaml)
- (flags (:standard -w -32 -warn-error -32))
+ (flags
+  (:standard -w -32 -warn-error -32))
  (name main)
  (libraries mocaml ppxlib)
  (preprocess

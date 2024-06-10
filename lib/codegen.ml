@@ -83,6 +83,6 @@ let rec cogen ~loc op = let open Multi_level_ops in match op with
     let e_then' = cogen e_then ~loc in
     let e_else' = cogen e_else ~loc in
     [%expr if [%e cond'] then [%e e_then'] else [%e e_else']]
-  | App (fn, args) ->
+  | App (_t, fn, args) ->
     let arg_labels = List.map (fun arg -> (Nolabel, cogen arg ~loc)) args in
     Ast_builder.Default.pexp_apply fn arg_labels ~loc
