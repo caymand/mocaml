@@ -2,6 +2,6 @@
  (name test_mocaml)
  (preprocess
   (pps mocaml))
- (libraries mocaml)
+ (libraries mocaml alcotest)
  (flags
   (:standard -w -32 -warn-error -32)))

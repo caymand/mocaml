@@ -1,4 +1,5 @@
 open! Mocaml.Extenders
+open Alcotest
 
 [%%ml let add a b = [%add 2 [%lift 1 1 a] [%lift 2 b]]]
 [%%ml let sub a b = [%sub 2 [%lift 1 1 a] [%lift 2 b]]]
@@ -18,6 +19,22 @@ open! Mocaml.Extenders
               [%lift 1 n]
               [%app 1 (sum [%sub 1 [%lift 1 n] [%lift 1 1]])]]
 ]
+
+[%%ml let mul_ml n m =
+        if [%lift 1 n] < [%lift 1 1]
+        then [%lift 2 0]
+        else
+          [%add 2
+              [%lift 2 m]
+              [%app 2
+                  (mul_ml
+                     [%sub 1 [%lift 1 n] [%lift 1 1]]
+                     [%lift 2 m])]]
+]
+
+let mul_ml' = [%run mul_ml 7]
+let mul_ml_res = [%run mul_ml' 6]
+
 let add' = [%run add 40]
 let add_res = [%run add' 2]
 let sub' = [%run sub 44]
@@ -32,22 +49,35 @@ let sum_res = [%run sum_ml 5]
 let branch_else = [%run branch 42]
 let branch_then = [%run branch 0]
 
+let test_add () =  
+  check int "add" 42 add_res
+let test_sub () =  
+  check int "sub" 42 sub_res    
+let test_div () =  
+  check int "div" 42 div_res    
+let test_mul () =  
+  check int "mul" 42 mul_res 
+
+let test_simple_branch_else () = check int "else" 42 (branch_else 0)
+let test_simple_branch_then () = check int "then" 42 (branch_then 42)        
 (* TODO: Test for binding times of branches *)
 
-let match_tests ~actual ~expected =
-  Array.iter2 (fun expected actual ->
-      match expected = actual with
-      | true -> ()
-      | false -> Printf.printf "Expected: %d, got %d" expected actual
-    )
-    expected
-    actual
+let test_app_one_arg () = check int "sum" 15 sum_res
+
+let test_app_multiple_args () = check int "mul" 42 mul_ml_res
 
 let () =
-  let actuals_arith = Array.of_list [add_res; sub_res; div_res; mul_res] in
-  match_tests
-    ~actual:actuals_arith
-    ~expected:(Array.make (Array.length actuals_arith) 42);
-  match_tests
-    ~actual:[|branch_else 0; branch_then 42; sum_res|]
-    ~expected:[|42; 42; 15|]
+  run "Tests..." [
+    "Arithmetic tests",
+    [test_case "add" `Quick test_add;
+     test_case "sub" `Quick test_sub;
+     test_case "div" `Quick test_div;
+     test_case "mul" `Quick test_mul
+    ];
+    "Branch tests",
+    [test_case "then" `Quick test_simple_branch_then;
+     test_case "else" `Quick test_simple_branch_else];
+    "Recursion / Function application tests",
+    [test_case "one arg" `Quick test_app_one_arg;
+     test_case "two args" `Quick test_app_multiple_args]  
+   ]
