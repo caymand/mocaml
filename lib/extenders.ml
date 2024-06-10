@@ -29,7 +29,6 @@ let map_structure (structure : structure) =
             let specialization =
               let* ml_def = List.find_opt (fun def -> String.equal fname def.name) (E.get ()) in
               let specialization = Pe.specialize ml_def.expr expr in
-              print_endline @@ "specialization: " ^ Pprinter.show_exp specialization;
               (* The new specialization can also be specialized (if it takes morea arguments) *)
               let new_fun_decl = {name = (var_name lhs.ppat_desc); expr = specialization} in
               E.modify (fun defs -> new_fun_decl::defs);
@@ -46,9 +45,9 @@ let map_structure (structure : structure) =
   end
   in
   let res = E.run ~init:[] (fun () -> mapper#structure structure) in
-  print_endline "-----";
-  print_endline @@ Pprinter.show_strct res;
-  print_endline "-----";
+  (* print_endline "-----"; *)
+  (* print_endline @@ Pprinter.show_strct res; *)
+  (* print_endline "-----"; *)
   res
 
 let run_file () =

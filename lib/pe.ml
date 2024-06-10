@@ -43,12 +43,16 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Div (e1, e2) -> eval_binop' e1 e2 Int.div
   in
 
+  let rec fun_body fn = match fn with
+    | Fun (_, body) -> fun_body body
+    | body -> body
+  in
+  
   (* TODO: Could directly call go *)
   (* let rec go_args acc = function *)
   (*   | [] -> Result.ok acc *)
   (*   | (Ok arg)::tl -> go_args (arg::acc) tl *)
-  (*   | (Error msg)::_ -> Error msg *)
-  (* in   *)
+  (*   | (Error msg)::_ -> Error msg   *)
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->      
@@ -74,7 +78,8 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       let* e2' = go e2 in
       if (bt_of_ops e1') = (bt_of_ops e2')
       then Result.ok @@ Binop (t-1, make_binop (e1', e2'))
-      else Result.error @@ Multi_level_ops.Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'      
+      else Result.error @@        
+        Multi_level_ops.Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'      
     | Expr e when equal_ml_val e.v ident ->
       Result.ok @@ Expr (decrease_bt e with_val)
     (* if e.t = 1 *)
@@ -116,8 +121,16 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       let* app' = replace ~ident ~with_val:v in_op in
       let* v = eval app' in 
       Result.ok @@ Expr {v=(Val v);t=0}
-    | App (t, fn, args) ->
-      Result.error "Not implemented"
+    | App (t, fn, args) -> 
+      let first_arg = List.hd args in
+      match bt_of_ops first_arg with
+      | 1 ->
+        (* In case any of the args can be fully evaluated *)
+        let* v = Result.bind(eval first_arg) (fun v -> Result.ok @@ Val v) in
+        let body = fun_body in_op in        
+        replace ~ident ~with_val:v body
+      | _ ->
+        Result.error "First argument to multi-level function should of bt=1"
   in
   go in_op
 
@@ -132,8 +145,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
       method! expression expr =
         match expr with
         | [%expr fun [%p? p] -> [%e? rest]] ->
-          (* print_endline @@  "arg: " ^ show_pat p; *)
-          (* print_endline @@ "body: " ^ show_exp rest; *)
           self#expression rest;
           let body = S.get () in
           S.set @@ Fun (var_name p.ppat_desc, body);        
@@ -157,13 +168,11 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           let bt = bt_of_pexp_desc t.pexp_desc in
           (* Try to lift either constant or ident.
              In case that fails, recursively lift the sub expression*)
-          (* print_endline @@ "before lift " ^ show_ml_ops (S.get ()); *)
           let e' = match create_ml_expr e ~t:bt with
             | Some expr -> Expr expr
             | None -> _super#expression e; S.get () (* TODO: super or self *)
           in
           S.set e';
-          (* print_endline @@ "after lift " ^ show_ml_ops (S.get ()); *)
         | [%expr [%lift [%e? s] [%e? t] [%e? e]]] ->
           let bt = bt_of_pexp_desc t.pexp_desc in
           let s' = bt_of_pexp_desc s.pexp_desc in
@@ -224,10 +233,9 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
             let specialization = replace
                 ~ident:(Ident ident_loc.txt)
                 ~with_val:arg_ml_expr.v
-                (S.get ()) in            
+                (S.get ()) in
             (* After specializing a function, we have to make sure that the
-               arguments to the function are still in scope.*)
-            (* print_endline @@ show_ml_ops (Result.get_ok specialization); *)
+               arguments to the function are still in scope.*)            
             Result.fold
               ~ok:(Codegen.cogen ~loc)
               ~error:(Codegen.fail_with ~loc:rest.pexp_loc)
