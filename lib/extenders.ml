@@ -45,9 +45,9 @@ let map_structure (structure : structure) =
   end
   in
   let res = E.run ~init:[] (fun () -> mapper#structure structure) in
-  (* print_endline "-----"; *)
-  (* print_endline @@ Pprinter.show_strct res; *)
-  (* print_endline "-----"; *)
+  print_endline "-----";
+  print_endline @@ Pprinter.show_strct res;
+  print_endline "-----";
   res
 
 let run_file () =

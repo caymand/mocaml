@@ -47,12 +47,7 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Fun (_, body) -> fun_body body
     | body -> body
   in
-  
-  (* TODO: Could directly call go *)
-  (* let rec go_args acc = function *)
-  (*   | [] -> Result.ok acc *)
-  (*   | (Ok arg)::tl -> go_args (arg::acc) tl *)
-  (*   | (Error msg)::_ -> Error msg   *)
+
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->      
@@ -112,6 +107,7 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
       end
+    (* NOTE: Application only works for recursive calls *)
     | App (1, fn, args) ->
       let* arg = if List.length args < 1
         then Result.error "invalid application"
@@ -119,13 +115,14 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       in
       let* v = Result.bind(eval arg) (fun v -> Result.ok @@ Val v) in
       let* app' = replace ~ident ~with_val:v in_op in
-      let* v = eval app' in 
+      let* v = eval app' in
       Result.ok @@ Expr {v=(Val v);t=0}
     | App (t, fn, args) -> 
-      let first_arg = List.hd args in
+      let* first_arg = if List.length args < 1
+        then Result.error "Cannot do application on no arguments"
+        else Result.ok @@ List.hd args in
       match bt_of_ops first_arg with
-      | 1 ->
-        (* In case any of the args can be fully evaluated *)
+      | 1 ->        
         let* v = Result.bind(eval first_arg) (fun v -> Result.ok @@ Val v) in
         let body = fun_body in_op in        
         replace ~ident ~with_val:v body
@@ -178,9 +175,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           let s' = bt_of_pexp_desc s.pexp_desc in
           let e' = match create_ml_expr e ~t:bt with
             | Some expr -> Expr expr
-            | None ->
-              failwith "not now"
-              (* self#expression e; S.get () *)
+            | None -> self#expression e; S.get ()
           in          
           S.set (Lift (s', e'))
         | [%expr if [%e? e1] < [%e? e2] then [%e? b1] else [%e? b2]] ->
@@ -210,7 +205,6 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
               failwith "Expected function application: [%app t fn (args)]."
           end
         | _ -> failwith @@ "Expression no implemented: " ^ (Pprintast.string_of_expression expr);
-                           (* Pprinter.show_exp expr; *)
           (* TODO: Consider making this an escape that just inserts the expression *)          
           (* TODO: Maybe also match run in here and possibly ml definitions. *)                    
     end
