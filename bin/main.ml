@@ -1,17 +1,16 @@
-let rec sum n =
-  if n < 1
-  then 0
-  else n + s
-
-[%%ml let sum_ml n =
-        if  [%lift 1 n] < [%lift 1 1]
-        then [%lift 1 0]
+[%%ml let mul_ml n m =
+        if [%lift 1 n] < [%lift 1 1]
+        then [%lift 2 0]
         else
-          [%add 1
-              [%lift 1 n]
-              [%app 1 (sum [%sub 1 [%lift 1 n] [%lift 1 1]])]]
+          [%add 2
+            [%lift 2 m]
+            [%app 2
+                (mul_ml
+                   [%sub 1 [%lift 1 n] [%lift 1 1]]
+                   [%lift 2 m])]]
 ]
-let res = [%run sum_ml 5]
+let mul_ml' = [%run mul_ml 7]
+let res = [%run mul_ml' 6]
 let () =
   (* print_int @@ elm [0, 40, 41, 42, 43]; *)
   ()

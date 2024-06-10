@@ -251,3 +251,40 @@ first we would transform this into something like
 Then we start specializing and we can remove the branch. We continue and
 eventually hit the application (a recursive call). We need to treat this as its
 own new function and generate code.
+
+That handles functions with a single argument. What about application on a
+function like this:
+
+```
+[%%ml let mul_ml n m =
+        if [%lift 1 n] < [%lift 1 1]
+        then [%lift 1 1]
+        else
+          [%add 2
+            [%lift 2 m]
+            [%app 2
+                (mul_ml
+                   [%sub 1 [%lift 1 n] [%lift 1 1]]
+                   [%lift 2 m])]]
+]
+```
+
+From the input, we can remove the `if-then-else` and specialize the function to:
+
+```
+[%%ml let mul_ml n m =
+        [%add 2
+            [%lift 2 m]
+            [%app 2
+                (mul_ml
+                   [%sub 1 [%lift 1 n] [%lift 1 1]]
+                   [%lift 2 m])]]
+]
+```
+
+Since one of the arguments to `mul_ml` can be fully evaluated given `n=?` then
+we are able to recurse again. Furthermore, we assume that arguments have binding
+time t=1 for the first argument. Therefore, this should also be the case for
+recursive calls
+
+

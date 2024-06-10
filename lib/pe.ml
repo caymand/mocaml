@@ -1,7 +1,11 @@
 open Multi_level_ops
 open Ppxlib
 
-module S = Algaeff.State.Make (struct type t = ml_ops end)    
+module S = Algaeff.State.Make (struct type t = ml_ops end)
+
+(* TODO: This module should be about done.
+   The only thing left to check is that all the bt rules fir
+   type checking is implemented. *)
 
 let lift_binop t e1 e2 ~traverse ~binop =  
   let _ = traverse e1 in let e1' = S.get () in 
@@ -95,8 +99,8 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       let* e' = go e in
       if t = 0
       then Result.ok @@ Lift (s-1, e')
-      else Result.ok @@ Lift (s, e')
-    | IfElse (cond, e_then, e_else) ->
+      else Result.ok @@ Lift (s, e')    
+    | IfElse (cond, e_then, e_else) when bt_of_ops e_then = bt_of_ops e_else->
       let* cond' = go_cond cond in
       begin
         match cond' with
@@ -107,6 +111,7 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
       end
+    | IfElse _ -> Result.error "Branches must have the same binding times"
     (* NOTE: Application only works for recursive calls *)
     | App (1, fn, args) ->
       let* arg = if List.length args < 1
