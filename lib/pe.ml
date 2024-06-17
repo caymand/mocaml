@@ -13,12 +13,13 @@ let lift_binop t e1 e2 ~traverse ~binop =
   let e = Binop (bt_of_pexp_desc t.pexp_desc, binop (e1',  e2')) in  
   S.set e
 
-let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
-  let decrease_bt e v =
-    if e.t > 0
-    then {v; t = (e.t - 1)}
-    else {v; t=0;} in
+let decrease_bt e v =
+  if e.t > 0
+  then {v; t = (e.t - 1)}
+  else {v; t=0;} 
 
+
+let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
   let rec eval = function
     | Binop (1, binop) ->
       eval_binop binop
@@ -51,7 +52,7 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
     | Fun (_, body) -> fun_body body
     | body -> body
   in
-
+  
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->      
@@ -105,34 +106,29 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       begin
         match cond' with
         | Bool b ->
-          if b then go e_then else go e_else
+          if b
+          then go e_then
+          else go e_else
         | _ ->
           let* e_then' = go e_then in
           let* e_else' = go e_else in
           Result.ok @@ IfElse (cond', e_then', e_else')
       end
     | IfElse _ -> Result.error "Branches must have the same binding times"
-    (* NOTE: Application only works for recursive calls *)
-    | App (1, fn, args) ->
-      let* arg = if List.length args < 1
-        then Result.error "invalid application"
-        else Result.ok (List.hd args)
-      in
-      let* v = Result.bind(eval arg) (fun v -> Result.ok @@ Val v) in
-      let* app' = replace ~ident ~with_val:v in_op in
-      let* v = eval app' in
-      Result.ok @@ Expr {v=(Val v);t=0}
-    | App (t, fn, args) -> 
-      let* first_arg = if List.length args < 1
-        then Result.error "Cannot do application on no arguments"
-        else Result.ok @@ List.hd args in
-      match bt_of_ops first_arg with
-      | 1 ->        
-        let* v = Result.bind(eval first_arg) (fun v -> Result.ok @@ Val v) in
-        let body = fun_body in_op in        
-        replace ~ident ~with_val:v body
-      | _ ->
-        Result.error "First argument to multi-level function should of bt=1"
+    (* Test of the first argument got smaller.
+       Only also works for static tests also. *)
+    | App (t, fn, arg::args) -> begin
+        match bt_of_ops arg with
+        | 1 ->        
+          let* v = Result.bind(eval arg) (fun v -> Result.ok @@ Val v) in
+          if v != with_val
+          then let body = fun_body in_op in        
+            replace ~ident ~with_val:v body
+          else Result.error "Possibility for infinite recursion detected."
+        | _ ->
+          Result.error "First argument to multi-level function should of bt=1"
+      end
+    | App (_, _, []) -> Result.error "App must take at least 1 argument"
   in
   go in_op
 
