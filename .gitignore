@@ -27,3 +27,16 @@ setup.log
 
 # Local OPAM switch
 _opam/
+
+# TeX report stuff
+
+docs/*.log
+docs/*.aux
+docs/auto
+docs/_minted*
+docs/*.bbl
+docs/*.blg
+*.aux
+*.toc
+*.log
+*.pdf

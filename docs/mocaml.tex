@@ -1,15 +1,35 @@
-\documentclass[a4paper]{report}
+\documentclass[a4paper, 12pt]{article}
 
 \usepackage{amsmath}
 \usepackage{amsfonts}
+\usepackage{minted}
+\usepackage{listings}
+\usepackage{float}
+\usepackage{tcolorbox}
+\usepackage{subcaption}
+
 
 \title{Mocaml - a multi level meta programming extension to OCaml}
 \author{Kristoffer Kortbaek}
 \date{2024/06/21}
 
 \begin{document}
+\maketitle
 
-\include{abstract}
+\begin{abstract}
+  This is an abstract.
+  These are citations: \cite{metaML}\cite{metaOCaml}\cite{two-stage}\cite{multilevel}
+\end{abstract}
+
+\tableofcontents
+
+\include{introduction}
+\include{implementation}
+\include{semantics}
+\include{conclusion}
+
+\bibliographystyle{plain} % We choose the "plain" reference style
+\bibliography{references} % Entries are in the refs.bib file
 
 \end{document}
 

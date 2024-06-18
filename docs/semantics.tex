@@ -1,0 +1,21 @@
+
+\section{mocaml Semantics}
+
+\subsection{Type Chcking}
+
+OCaml is a strongly typed language with the property that well-typed OCaml programs do not go wrong as described in \cite{MilnerRobin1978Atot}. This is one of the main motivation for adding multi-level annotations to OCaml - handwritten program generators are still well-typed. This however only dictates that the OCaml types are consistent. It must also be ensured that the binding-time annotations of a mocaml program is consistent. Both aspect of well-typed mocaml programs will be discussed in this section.
+
+\subsubsection{Binding Time}
+
+Since there is no multi-level binding time analysis for mocaml programs, it is up to the programmer to add the correct binding time value to each multi-level annotation. During
+
+\subsection{Call Unfolding}
+% TODO: Explain what unfolding is and find reference
+% TODO: Also explain why we allow infinite code unfolding, and what alternatives that are provided.
+Using recursion in mocaml can cause problems with infinite call unfolding during specialization. For the multiplication program shown in figure \ref{fig:ml_mul}, the specialization simply unfolded the recursive call $n=3$ times. This succeeded because the condition has binding time $t=1$ and the specializer can thereby detect when the branch eventually becomes \texttt{true} and recursion stops. However, if the branch had instead conditioned on $m < 1$, then the binding time would be $t = 2$, and the \texttt{if-then-else} expression would be dynamic at the current stage. As a consequence, if the specializer tries to unroll the recursion, it will run into infinite recursion. 
+
+
+%%% Local Variables:
+%%% mode: LaTeX
+%%% TeX-master: "mocaml"
+%%% End:
