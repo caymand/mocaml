@@ -76,11 +76,18 @@ let () =
       Extension.Context.expression
       Ast_pattern.(single_expr_payload __)
       Codegen.gen_lift in
+  let rule_app = Context_free.Rule.extension @@
+    Extension.V3.declare
+      "app"
+      Extension.Context.expression
+      Ast_pattern.(single_expr_payload __)
+      Codegen.gen_app in
   Driver.register_transformation ~rules:[
     rule_lift;
     rule_add;
     rule_sub;
     rule_div;
-    rule_mul
+    rule_mul;
+    rule_app
   ]
     "expression";

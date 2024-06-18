@@ -1,7 +1,8 @@
 open! Ppxlib
-
+open! Pprinter
+    
 let fail_with text ~loc =
-  Location.raise_errorf ~loc "%s" text
+  Location.raise_errorf ~loc "%s" text  
 
 let gen_binop ~ctxt ~oper expr =
   let loc = Expansion_context.Extension.extension_point_loc ctxt in
@@ -39,6 +40,21 @@ let gen_val ~loc leaf = let open Multi_level_ops in match leaf with
   | Val v ->        
     Ast_builder.Default.eint v ~loc
   | Ident id -> (Ast_builder.Default.evar id ~loc)
+
+let gen_app ~ctxt (fn_app : expression) =
+  let loc = Expansion_context.Extension.extension_point_loc ctxt in
+  match fn_app with
+  | [%expr [%e? _t] [%e? fn_app]] -> fn_app
+  (* match fn_app.pexp_desc with *)
+  (* | Pexp_apply (fn, args) -> *)
+  (*   let args' = List.map snd args in *)
+  (*   Stdio.print_endline "Args;"; *)
+  (*   Stdio.print_endline @@ [%show: expression list] args'; *)
+  (*   Stdio.print_endline "fn;"; *)
+  (*   Stdio.print_endline @@ Pprinter.show_exp fn; *)
+  (*   Ast_builder.Default.pexp_apply ~loc fn args *)
+  | _ -> fail_with ~loc @@
+    "Invalid function application generated: " ^ (Pprinter.show_exp fn_app)
 
 (* TODO: We need to rename or "quote" the function name if there is an application
    and bind it to an inner recursive helper like:
@@ -110,4 +126,3 @@ let cogen ~loc op = S.run ~init:None @@ fun () ->
       and fn_expr = Ast_builder.Default.evar ~loc fname in    
       [%expr let rec [%p fn_pat] = [%e code] in [%e fn_expr]]
     | None -> code
-   

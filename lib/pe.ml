@@ -124,15 +124,16 @@ let rec replace ~ident ~with_val in_op =
         match bt_of_ops arg with
         | 1 ->        
           let* v = eval arg >>= (fun v -> Result.return @@ Val v) in
-          if Multi_level_ops.equal_ml_val v with_val
-          then
-            let body = fun_body in_op in
-            let is_static_if = R.read () in
-            let* args' = Result.all @@ List.map ~f:go args in
-            if is_static_if
-            then replace ~ident ~with_val:v body
-            else Result.return @@ App (t - 1, fn, args) (* TODO: Safe to remove specialized arg? *)
-          else Result.fail "Possibility for infinite recursion detected."
+          (* TODO: Need infinite recusion? *)
+          (* if Multi_level_ops.equal_ml_val v with_val *)
+          (* then *)
+          (* else Result.fail "Possibility for infinite recursion detected." *)
+          let body = fun_body in_op in
+          let is_static_if = R.read () in
+          let* args' = Result.all @@ List.map ~f:go args in
+          if is_static_if
+          then replace ~ident ~with_val:v body
+          else Result.return @@ App (t - 1, fn, args) (* TODO: Safe to remove specialized arg? *)
         | _ ->
           Result.fail @@
           "First argument to multi-level function should of bt=1.\nExpr: " ^ Multi_level_ops.show_ml_ops op
@@ -225,8 +226,7 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
     | Some expr -> expr
     | None -> failwith "You can only specialize with a constant"
   in
-  (* Specialize a: fun args -> body.
-     NOTE: Body might itself be a fun.*)  
+  
   let loc = to_specialize.pexp_loc in
   (* Specialize a: fun args -> body.
      NOTE: Body might itself be a fun.*)
