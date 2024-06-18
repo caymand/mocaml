@@ -1,5 +1,5 @@
 (library
- (libraries ppxlib algaeff)
+ (libraries base stdio ppxlib algaeff)
  (flags
   (:standard -w -27 -warn-error -26))
  (kind ppx_rewriter)

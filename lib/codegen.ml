@@ -40,13 +40,23 @@ let gen_val ~loc leaf = let open Multi_level_ops in match leaf with
     Ast_builder.Default.eint v ~loc
   | Ident id -> (Ast_builder.Default.evar id ~loc)
 
-let rec cogen ~loc op = let open Multi_level_ops in match op with
-  (* | Add (t, e1, e2) -> *)
+(* TODO: We need to rename or "quote" the function name if there is an application
+   and bind it to an inner recursive helper like:
+   let sum =
+     let rec sum' n = if n < 1 then 0 else n + sum' (n - 1) in
+     sum'
+*)
+
+module S = Algaeff.State.Make (struct type t = string option end)
+
+let rec gen_code ~loc op =
+  let open Multi_level_ops in
+  match op with  
   | Binop (t, binop) ->
     let (e1, e2, _) = construct_binop binop in
     let t' = (Ast_builder.Default.eint t ~loc) in
-    let e1' = cogen e1 ~loc in
-    let e2' = cogen e2 ~loc in
+    let e1' = gen_code e1 ~loc in
+    let e2' = gen_code e2 ~loc in
     begin match binop with
       | Add _ ->
         [%expr [%add [%e t'] [%e e1'] [%e e2']]]
@@ -64,25 +74,40 @@ let rec cogen ~loc op = let open Multi_level_ops in match op with
   | Lift (s, e) ->    
     let e = match e with
       | Expr e -> [%expr [%e (gen_val e.v ~loc)]]
-      | _ -> cogen e ~loc
+      | _ -> gen_code e ~loc
     and t = Ast_builder.Default.eint ~loc @@ bt_of_ops e 
     and s' = Ast_builder.Default.eint s ~loc in
     [%expr [%lift [%e s'] [%e t] [%e e]]]
   | Fun (a, body) ->
     let a' = Ast_builder.Default.ppat_var ~loc (Loc.make ~loc a) in
-    let body' = cogen body ~loc in
+    let body' = gen_code body ~loc in
     [%expr fun [%p a'] -> [%e body']]
   | IfElse (cond, e_then, e_else) ->
     let cond' = match cond with
       | Leq (e1, e2) ->
-        let e1' = cogen e1 ~loc in
-        let e2' = cogen e2 ~loc in
+        let e1' = gen_code e1 ~loc in
+        let e2' = gen_code e2 ~loc in
         [%expr [%e e1'] < [%e e2']]
       | _ -> fail_with "unexpected conditional" ~loc
     in
-    let e_then' = cogen e_then ~loc in
-    let e_else' = cogen e_else ~loc in
+    let e_then' = gen_code e_then ~loc in
+    let e_else' = gen_code e_else ~loc in
     [%expr if [%e cond'] then [%e e_then'] else [%e e_else']]
-  | App (_t, fn, args) ->
-    let arg_labels = List.map (fun arg -> (Nolabel, cogen arg ~loc)) args in
-    Ast_builder.Default.pexp_apply fn arg_labels ~loc
+  | App (t, fn, args) ->
+    S.set (Some fn);
+    let fn_exp = Ast_builder.Default.evar ~loc fn in
+    let arg_labels = List.map (fun arg -> (Nolabel, gen_code arg ~loc)) args in
+    let t' = Ast_builder.Default.eint ~loc t in    
+    let fn_app = Ast_builder.Default.pexp_apply fn_exp arg_labels ~loc in
+    [%expr [%app [%e t'] [%e fn_app]]]
+
+let cogen ~loc op = S.run ~init:None @@ fun () ->
+    let code = gen_code ~loc op
+    and has_app = S.get () in
+    match has_app with
+    | Some fname ->
+      let fn_pat = Ast_builder.Default.pvar ~loc fname 
+      and fn_expr = Ast_builder.Default.evar ~loc fname in    
+      [%expr let rec [%p fn_pat] = [%e code] in [%e fn_expr]]
+    | None -> code
+   

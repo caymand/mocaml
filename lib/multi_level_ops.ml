@@ -30,7 +30,7 @@ and ml_ops = Binop of int * ml_binop
            | Lift of int * ml_ops
            | Fun of string * ml_ops
            | IfElse of ml_cond * ml_ops * ml_ops
-           | App of int * expression * (ml_ops list)
+           | App of int * string * (ml_ops list)
 [@@deriving show]
 
 module Errors = struct
@@ -58,12 +58,13 @@ let var_name = function
   | _ -> failwith "Only normal functions fun x -> body can be specialized"
 
 
-let rec bt_of_ops = function
+let rec bt_of_ops op = match op with
   | Binop (t, _binop) -> t
   | Expr {v=_; t} -> t
   | Lift (s, op) -> s + bt_of_ops op
   | Fun (_, body) -> bt_of_ops body
-  | _ -> failwith "Cannot find bt for this expression"
+  | App (t, _, _) -> t
+  | _ -> failwith @@ "Cannot find bt for this expression: " ^ show_ml_ops op
 
 let construct_binop = function
     | Add (e1, e2) -> (e1, e2, fun (e1', e2') -> Add (e1', e2'))

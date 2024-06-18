@@ -1,6 +1,8 @@
 open Multi_level_ops
 open Ppxlib
-
+open! Base
+open! Stdio
+    
 module S = Algaeff.State.Make (struct type t = ml_ops end)
 
 (* TODO: This module should be about done.
@@ -18,41 +20,45 @@ let decrease_bt e v =
   then {v; t = (e.t - 1)}
   else {v; t=0;} 
 
+let rec fun_body fn = match fn with
+  | Fun (_, body) -> fun_body body
+  | body -> body 
 
-let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
+let rec replace ~ident ~with_val in_op =
+
+  let (let*) = Result.(>>=) in
+  let (>>=) = Result.(>>=) in
+
+  let module R = Algaeff.Reader.Make (Bool) in
+
   let rec eval = function
     | Binop (1, binop) ->
       eval_binop binop
     | Lift (s, e) when s <= 1 -> eval e
     | Expr e when e.t <= 1 -> begin
         match e.v with
-        | Val v -> Result.ok v        
+        | Val v -> Ok v        
         | ident' when equal_ml_val ident' ident  -> begin
             match with_val with
-            | Ident _ -> Result.error ("Impossible")
-            | Val v -> Result.ok v
+            | Ident _ -> Error "Impossible"
+            | Val v -> Ok v
           end
-        | _ -> Result.error @@ "Cannot evaluate identifiers: " ^ show_ml_val e.v
+        | _ -> Error ("Cannot evaluate identifiers: " ^ show_ml_val e.v)
       end
-    | e -> Result.error @@ "Cannot eval expr of bt > 1: " ^ show_ml_ops e;  
+    | e -> Error ("Cannot eval expr of bt > 1: " ^ show_ml_ops e)
   and eval_binop binop =
     let eval_binop' e1 e2 (oper : int -> int -> int) =
       let* v1 = eval e1 in
       let* v2 = eval e2 in
-      Result.ok @@ oper v1 v2
+      Ok (oper v1 v2)
     in
     match binop with
-    | Add (e1, e2) -> eval_binop' e1 e2 Int.add
-    | Sub (e1, e2) -> eval_binop' e1 e2 Int.sub
-    | Mul (e1, e2) -> eval_binop' e1 e2 Int.mul
-    | Div (e1, e2) -> eval_binop' e1 e2 Int.div
+    | Add (e1, e2) -> eval_binop' e1 e2 Int.(+)
+    | Sub (e1, e2) -> eval_binop' e1 e2 Int.(-)
+    | Mul (e1, e2) -> eval_binop' e1 e2 Int.( * )
+    | Div (e1, e2) -> eval_binop' e1 e2 Int.(/)
   in
 
-  let rec fun_body fn = match fn with
-    | Fun (_, body) -> fun_body body
-    | body -> body
-  in
-  
   let rec go_cond cond =    
     match cond with
     | Leq (e1, e2) ->      
@@ -61,9 +67,9 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       if bt_of_ops e1' = bt_of_ops e2' && bt_of_ops e1' = 0
       then let* v1 = eval e1' in
         let* v2 = eval e2' in
-        Result.ok @@ Bool (v1 < v2)
-      else Result.ok @@ Leq (e1', e2')
-    | b -> Result.ok b  
+        Ok (Bool (v1 < v2))
+      else Ok (Leq (e1', e2'))
+    | b -> Ok b  
   and go op =    
     match op with
     | Binop (1, binop)->
@@ -71,66 +77,69 @@ let rec replace ~ident ~with_val in_op = let (let*) = Result.bind in
       let* e1' = go e1 in
       let* e2' = go e2 in      
       let* v = eval @@ Binop (1, make_binop (e1', e2')) in      
-      Result.ok @@ Expr {v=(Val v); t=0}
+      Ok (Expr {v=(Val v); t=0})
     | Binop (t, binop) ->
       let (e1, e2, make_binop) = construct_binop binop in
       let* e1' = go e1 in
       let* e2' = go e2 in
       if (bt_of_ops e1') = (bt_of_ops e2')
-      then Result.ok @@ Binop (t-1, make_binop (e1', e2'))
-      else Result.error @@        
-        Multi_level_ops.Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2'      
+      then Ok (Binop (t-1, make_binop (e1', e2')))
+      else Error(        
+          Multi_level_ops.Errors.invalid_binding_times ~e1 ~e2 ~e1' ~e2')
     | Expr e when equal_ml_val e.v ident ->
-      Result.ok @@ Expr (decrease_bt e with_val)
-    (* if e.t = 1 *)
-    (* then Result.ok @@ Expr (decrease_bt e with_val) *)
-    (* else Result.error @@ "ICE. Invalid BT for variable" *)
+      Ok (Expr (decrease_bt e with_val))    
     | Expr e ->
-      Result.ok @@ Expr (decrease_bt e e.v)
+      Ok (Expr (decrease_bt e e.v))
     | Fun (a, body) ->
       let* body' = go body in
-      Result.ok @@ Fun (a, body')
+      Ok (Fun (a, body'))
     (* Release the inner value. s specializations has occured. *)
     | Lift (1, e) when bt_of_ops e = 0 ->
       let* e' = go e in
-      Result.ok e'
+      Ok e'
     | Lift (s, e) ->
       (* In this case, if t=0 and s=0 the expression is just evaluated as is *)
       let t = bt_of_ops e in
       let* e' = go e in
       if t = 0
-      then Result.ok @@ Lift (s-1, e')
-      else Result.ok @@ Lift (s, e')    
+      then Ok (Lift (s-1, e'))
+      else Ok (Lift (s, e'))
     | IfElse (cond, e_then, e_else) when bt_of_ops e_then = bt_of_ops e_else->
       let* cond' = go_cond cond in
       begin
         match cond' with
-        | Bool b ->
+        | Bool b -> R.scope (fun _ -> true) @@ fun () ->
           if b
           then go e_then
           else go e_else
         | _ ->
           let* e_then' = go e_then in
           let* e_else' = go e_else in
-          Result.ok @@ IfElse (cond', e_then', e_else')
+          Ok (IfElse (cond', e_then', e_else'))
       end
-    | IfElse _ -> Result.error "Branches must have the same binding times"
+    | IfElse _ -> Error "Branches must have the same binding times"
     (* Test of the first argument got smaller.
        Only also works for static tests also. *)
     | App (t, fn, arg::args) -> begin
         match bt_of_ops arg with
         | 1 ->        
-          let* v = Result.bind(eval arg) (fun v -> Result.ok @@ Val v) in
-          if v != with_val
-          then let body = fun_body in_op in        
-            replace ~ident ~with_val:v body
-          else Result.error "Possibility for infinite recursion detected."
+          let* v = eval arg >>= (fun v -> Result.return @@ Val v) in
+          if Multi_level_ops.equal_ml_val v with_val
+          then
+            let body = fun_body in_op in
+            let is_static_if = R.read () in
+            let* args' = Result.all @@ List.map ~f:go args in
+            if is_static_if
+            then replace ~ident ~with_val:v body
+            else Result.return @@ App (t - 1, fn, args) (* TODO: Safe to remove specialized arg? *)
+          else Result.fail "Possibility for infinite recursion detected."
         | _ ->
-          Result.error "First argument to multi-level function should of bt=1"
+          Result.fail @@
+          "First argument to multi-level function should of bt=1.\nExpr: " ^ Multi_level_ops.show_ml_ops op
       end
-    | App (_, _, []) -> Result.error "App must take at least 1 argument"
-  in
-  go in_op
+    | App (_, _, []) -> Result.fail "App must take at least 1 argument"
+  in  
+  R.run ~env:false @@ fun () -> go in_op
 
 let specialize (to_specialize : expression) (arg : expression) : expression =  
   let lift v ident =
@@ -193,49 +202,78 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
           S.set (IfElse (cond, e_then, e_else))        
         (* The last case can be any OCaml expression. However thse might
            still possibly contain ML ops.*)        
-        | [%expr [%app [%e? t] [%e? fn_app]]] -> begin
+        | [%expr [%app [%e? t] [%e? fn_app]]] ->
+          begin
             match fn_app.pexp_desc with
-            | Pexp_apply (fn, args) ->
+            | Pexp_apply (
+                { pexp_desc = Pexp_ident { txt = Lident fname; _ }; _ },
+                args) ->
               let bt = bt_of_pexp_desc t.pexp_desc
-              and args_op = List.map (fun (_, expr) ->
+              and args_op = List.map args ~f:(fun (_, expr) ->
                   self#expression expr;
-                  S.get () ) args
+                  S.get ()) 
               in
-              S.set @@ App (bt, fn, args_op);
+              S.set @@ App (bt, fname, args_op);
             | _ ->
               failwith "Expected function application: [%app t fn (args)]."
           end
-        | _ -> failwith @@ "Expression no implemented: " ^ (Pprintast.string_of_expression expr);
-          (* TODO: Consider making this an escape that just inserts the expression *)          
-          (* TODO: Maybe also match run in here and possibly ml definitions. *)                    
+        | _ -> failwith @@
+          "Expression not implemented: " ^ (Pprintast.string_of_expression expr);                    
     end
   in
-  (* NOTE: Incorrect result since the arg_ml_expr is never updated *)
   let arg_ml_expr = match create_ml_expr arg with
     | Some expr -> expr
     | None -> failwith "You can only specialize with a constant"
   in
+  (* Specialize a: fun args -> body.
+     NOTE: Body might itself be a fun.*)  
   let loc = to_specialize.pexp_loc in
+  (* Specialize a: fun args -> body.
+     NOTE: Body might itself be a fun.*)
+  let specialize_fun arg body =
+    match arg.ppat_desc with
+    | Ppat_var ident_loc ->
+      let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in
+      lift_body#expression body;
+      let specialization = replace
+          ~ident:(Ident ident_loc.txt)
+          ~with_val:arg_ml_expr.v
+          (S.get ()) in
+      begin
+        match specialization with
+        | Ok specialization -> Codegen.cogen ~loc specialization
+        | Error msg -> Codegen.fail_with ~loc:body.pexp_loc msg
+      end        
+    | _ -> Codegen.fail_with "invalid type" ~loc:arg.ppat_loc
+  in
   (* Traverse the tree inside an effect handler to collect states *)
   S.run ~init:(Expr arg_ml_expr) (fun () ->
+      (* Codegen.fail_with ~loc:to_specialize.pexp_loc "foo" *)
+      print_endline "to specialize:";
+      print_endline (Pprinter.show_exp to_specialize);
       match to_specialize with
-      (* For the function pattern, ident is the argument that is specialized. *)
-      | [%expr fun [%p? ident] -> [%e? rest]] -> begin
-          match ident.ppat_desc with
-          | Ppat_var ident_loc ->
-            let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in
-            lift_body#expression rest;
-            let specialization = replace
-                ~ident:(Ident ident_loc.txt)
-                ~with_val:arg_ml_expr.v
-                (S.get ()) in
-            (* After specializing a function, we have to make sure that the
-               arguments to the function are still in scope.*)            
-            Result.fold
-              ~ok:(Codegen.cogen ~loc)
-              ~error:(Codegen.fail_with ~loc:rest.pexp_loc)
-              specialization
-          | _ -> Codegen.fail_with "invalid type" ~loc:ident.ppat_loc
-        end
-      | _ -> Codegen.fail_with "wrong type" ~loc:to_specialize.pexp_loc
+      | [%expr
+        let rec [%p? fn] = fun [%p? arg] -> [%e? body]
+        in [%e? _]] ->
+        specialize_fun arg body
+      | [%expr fun [%p? arg] -> [%e? body]] ->
+        specialize_fun arg body
+      | _ -> Codegen.fail_with ~loc:to_specialize.pexp_loc @@
+        "wrong type: " ^ (Pprinter.show_exp to_specialize)
     )
+
+(* begin *)
+(*          match ident.ppat_desc with *)
+(*          | Ppat_var ident_loc -> *)
+(*            let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in *)
+(*            lift_body#expression rest; *)
+(*            let specialization = replace *)
+(*                ~ident:(Ident ident_loc.txt) *)
+(*                ~with_val:arg_ml_expr.v *)
+(*                (S.get ()) in *)
+(*            Result.fold *)
+(*              ~ok:(Codegen.cogen ~loc ~fname:ident) *)
+(*              ~error:(Codegen.fail_with ~loc:rest.pexp_loc) *)
+(*              specialization *)
+(*          | _ -> Codegen.fail_with "invalid type" ~loc:ident.ppat_loc *)
+(*        end *)
