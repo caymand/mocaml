@@ -1,4 +1,5 @@
 open Multi_level_ops
+open! Pprinter
 open Ppxlib
 open! Base
 open! Stdio
@@ -124,16 +125,13 @@ let rec replace ~ident ~with_val in_op =
         match bt_of_ops arg with
         | 1 ->        
           let* v = eval arg >>= (fun v -> Result.return @@ Val v) in
-          (* TODO: Need infinite recusion? *)
-          (* if Multi_level_ops.equal_ml_val v with_val *)
-          (* then *)
-          (* else Result.fail "Possibility for infinite recursion detected." *)
+          (* TODO: Need infinite recusion? *)          
           let body = fun_body in_op in
           let is_static_if = R.read () in
           let* args' = Result.all @@ List.map ~f:go args in
           if is_static_if
           then replace ~ident ~with_val:v body
-          else Result.return @@ App (t - 1, fn, args) (* TODO: Safe to remove specialized arg? *)
+          else Result.return @@ App (t - 1, fn, args') (* TODO: Safe to remove specialized arg? *)
         | _ ->
           Result.fail @@
           "First argument to multi-level function should of bt=1.\nExpr: " ^ Multi_level_ops.show_ml_ops op
@@ -261,19 +259,3 @@ let specialize (to_specialize : expression) (arg : expression) : expression =
       | _ -> Codegen.fail_with ~loc:to_specialize.pexp_loc @@
         "wrong type: " ^ (Pprinter.show_exp to_specialize)
     )
-
-(* begin *)
-(*          match ident.ppat_desc with *)
-(*          | Ppat_var ident_loc -> *)
-(*            let lift_body = lift arg_ml_expr.v (Ident ident_loc.txt) in *)
-(*            lift_body#expression rest; *)
-(*            let specialization = replace *)
-(*                ~ident:(Ident ident_loc.txt) *)
-(*                ~with_val:arg_ml_expr.v *)
-(*                (S.get ()) in *)
-(*            Result.fold *)
-(*              ~ok:(Codegen.cogen ~loc ~fname:ident) *)
-(*              ~error:(Codegen.fail_with ~loc:rest.pexp_loc) *)
-(*              specialization *)
-(*          | _ -> Codegen.fail_with "invalid type" ~loc:ident.ppat_loc *)
-(*        end *)

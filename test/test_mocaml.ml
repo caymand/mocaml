@@ -1,7 +1,9 @@
 open! Mocaml.Extenders
 open Alcotest
 
-[%%ml let add a b = [%add 2 [%lift 1 1 a] [%lift 2 b]]]
+[%%ml let add a b = [%add 2
+          [%lift 1 1 a]
+          [%lift 2 b]]]
 [%%ml let sub a b = [%sub 2 [%lift 1 1 a] [%lift 2 b]]]
 [%%ml let div a b = [%div 2 [%lift 1 1 a] [%lift 2 b]]]
 [%%ml let mul a b = [%mul 2 [%lift 1 1 a] [%lift 2 b]]]
@@ -32,8 +34,24 @@ open Alcotest
                      [%lift 2 m])]]
 ]
 
+[%%ml let mul_ml_dynamic_if n m =
+        if [%lift 2 m] < [%lift 2 1]
+        then [%lift 2 0]
+        else
+          [%add 2
+              [%lift 2 n]
+              [%app 2
+                  (mul_ml_dynamic_if                     
+                     [%lift 1 n]
+                     [%sub 2 [%lift 2 m] [%lift 2 1]])]]
+]
+
+
 let mul_ml' = [%run mul_ml 7]
 let mul_ml_res = [%run mul_ml' 6]
+
+let mul_ml_dynamic_if' = [%run mul_ml_dynamic_if 7]
+let mul_ml_dynamic_if_res = [%run mul_ml_dynamic_if' 6]
 
 let add' = [%run add 40]
 let add_res = [%run add' 2]
@@ -56,7 +74,11 @@ let test_sub () =
 let test_div () =  
   check int "div" 42 div_res    
 let test_mul () =  
-  check int "mul" 42 mul_res 
+  check int "mul" 42 mul_res
+
+let test_dynamic_if () =
+  check int "dynamic if" 42 mul_ml_dynamic_if_res;
+  check int "dynamic if" 42 (mul_ml_dynamic_if' 6)
 
 let test_simple_branch_else () = check int "else" 42 (branch_else 0)
 let test_simple_branch_then () = check int "then" 42 (branch_then 42)        
@@ -79,5 +101,7 @@ let () =
      test_case "else" `Quick test_simple_branch_else];
     "Recursion / Function application tests",
     [test_case "one arg" `Quick test_app_one_arg;
-     test_case "two args" `Quick test_app_multiple_args]  
+     test_case "two args" `Quick test_app_multiple_args;
+     test_case "Dynamic if with recursion" `Quick test_dynamic_if
+    ]  
    ]
