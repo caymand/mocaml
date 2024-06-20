@@ -82,7 +82,6 @@ let test_dynamic_if () =
 
 let test_simple_branch_else () = check int "else" 42 (branch_else 0)
 let test_simple_branch_then () = check int "then" 42 (branch_then 42)        
-(* TODO: Test for binding times of branches *)
 
 let test_app_one_arg () = check int "sum" 15 sum_res
 
