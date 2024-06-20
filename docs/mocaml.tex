@@ -21,8 +21,12 @@
 \maketitle
 
 \begin{abstract}
-  This is an abstract.
-  These are citations: \cite{metaML}\cite{metaOCaml}\cite{two-stage}\cite{multilevel}
+This work introduces \textit{mocaml}, a small syntax extension to OCaml adding meta-programming to a small subset of the language (arithmetic expressions, and function application) through multi-level programming features for handwriting program generators.
+
+Similar work to this has already been done, and \cite{two-stage} implements a two-level functional language with templates \texttt{<>} and escapes \texttt{\~} and \cite{metaML} implements a multi-stage ML inspired language with arbitrary stages. MetaOCaml is an OCaml dialect that also implements multi-stage programming to the langauge. Instead of going with two-level annotations, this work is inspired by \cite{multilevel} and adds multi level operations. This approach still allows the user to stage the computation into multiple stages.
+The implementation of mocaml uses quasi quotations to annotate OCaml programs with multi-level operations, and a syntax rewriter then rewrites the OCaml parsetree.
+
+\textbf{Keywords:} multi-stage programming, multi-level programming, program generators.
 \end{abstract}
 
 \tableofcontents
