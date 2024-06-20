@@ -1,19 +1,116 @@
 
-\section{mocaml Semantics}
+\section{Semantics of mocaml}
 
 \subsection{Type Chcking}
 
-OCaml is a strongly typed language with the property that well-typed OCaml programs do not go wrong as described in \cite{MilnerRobin1978Atot}. This is one of the main motivation for adding multi-level annotations to OCaml - handwritten program generators are still well-typed. This however only dictates that the OCaml types are consistent. It must also be ensured that the binding-time annotations of a mocaml program is consistent. Both aspect of well-typed mocaml programs will be discussed in this section.
+OCaml is a strongly typed language with the property that well-typed OCaml programs do not go wrong as described in \cite{MilnerRobin1978Atot}. This is one of the main motivations for adding multi-level annotations to OCaml - handwritten program generators are still well-typed. This however only dictates that the OCaml types are consistent. It must also be ensured that the binding-time annotations of a mocaml program are consistent. For this reason, both aspect of well-typed mocaml programs will be discussed in this section.
 
 \subsubsection{Binding Time}
 
-Since there is no multi-level binding time analysis for mocaml programs, it is up to the programmer to add the correct binding time value to each multi-level annotation. During
+The same definitions of binding-time values (bt-values) and binding-time types (bt-types) of \cite{multilevel} will be used to describe the type checking of binding-time types in mocaml. Like in \cite{multilevel}, the different base type, denoted $B^t$ with binding type value $t$, are not distinguished between, since we do not care for them when type checking binding-time types. It is left to a later stage of the OCaml type checker to type check the OCaml base types.
+A big difference from \cite{multilevel} is that mocaml requires the programmer to manually annotate all multi-level construct with binding time information. The approach to binding-time type checking for ocaml is then done as an on-the-fly approach during specialization using the below rules. This catches any malformed binding time annotations and a suitable error message is given. The rules for type checking closely follows those in \cite{multilevel} and they are given below:
+
+\begin{gather*}
+  \deriv{Con}{}{\typederiv{\Gamma}{c}{B^0}} \quad
+  \deriv{Var}{}{\typederiv{\Gamma}{x}{\tau}}\Gamma(x)=\tau\\
+  \deriv{Lift}{
+    \typederiv{\Gamma}{e}{B^t}
+  }{
+    \typederiv{\Gamma}{\text{\texttt{[\%lift s t e]}}}{B^{s+t}}
+  }
+  \quad
+  \deriv{Plus}
+  {
+    \typederiv{\Gamma}{e_1}{B^t} \quad
+    \typederiv{\Gamma}{e_2}{B^t}
+  }
+  {
+    \typederiv{\Gamma}{\text{\texttt{[\%plus t e1 e2]}}}{B^t}
+  }
+  \\  
+  \deriv{If}{
+    \typederiv{\Gamma}{e_0}{B^t} \quad
+    \typederiv{\Gamma}{e_1}{\tau} \quad
+    \typederiv{\Gamma}{e_2}{\tau}
+  }
+  {\typederiv{\Gamma}{\mathtt{if}~e_0~\mathtt{then}~e_1~\mathtt{else}~e2}{\tau}
+  }\|\tau\| \ge t
+  \\
+  \deriv{App}{
+    \typederiv{\Gamma}{\mathtt{fn}}{\tau_1,..,\tau_n \rightarrow ^t \tau'} \quad
+    \typederiv{\Gamma}{e_i}{\tau_i}
+  }{
+    \typederiv{\Gamma}{\text{\texttt{[\%app t fn }}e_1,..,e_n]}{\tau'}
+  }
+\end{gather*}
+
+Most of the rules are already explained in \cite{multilevel} and wont be repeated. Also note that there is not an \texttt{Op} rule like in \cite{multilevel}, but only a \texttt{plus} rule (the rules for subtraction, multiplication and division are analogous). The reason being that mocaml only supports a finite number of multi-level operations due to limitations of the implementation language OCaml. Future work could look into supporting more or arbitrary operators. Notably among the rules is the rule for application. It tells us that after $t$ specializations the result of the application will become available. This was also seen in the two-level program in figure \ref{lst:mul} where the result of the application was fully known after two specializations. %TODO: Is this correct.
+
+\subsubsection{OCaml Type Checking}
+
+One of the main motivations for mocaml was the ability to generate type safe programs. The multi-level annotations for mocaml are built as syntax extensions to OCaml and the program generator will therefore run before the OCaml type checker. This means that any generated programs that successfully type checks by the OCaml type checker will be as type safe as any handwritten OCaml source program.
 
 \subsection{Call Unfolding}
-% TODO: Explain what unfolding is and find reference
-% TODO: Also explain why we allow infinite code unfolding, and what alternatives that are provided.
-Using recursion in mocaml can cause problems with infinite call unfolding during specialization. For the multiplication program shown in figure \ref{fig:ml_mul}, the specialization simply unfolded the recursive call $n=3$ times. This succeeded because the condition has binding time $t=1$ and the specializer can thereby detect when the branch eventually becomes \texttt{true} and recursion stops. However, if the branch had instead conditioned on $m < 1$, then the binding time would be $t = 2$, and the \texttt{if-then-else} expression would be dynamic at the current stage. As a consequence, if the specializer tries to unroll the recursion, it will run into infinite recursion. 
+It was shown in figure \ref{lst:mul} that specialization of mocaml programs can unfold recursive calls. However, as it is noted in \cite{jones1993chapter5.5}, without a strategy for call unfolding, specialization might lead to infinite call unfolding. The call unfolding strategy used in mocaml is similar to the strategy in \textit{Scheme0} as stated in \cite{jones1993chapter5.5}. That is, if we have a static branch (which means the binding time is $bt \le 1$) then call unfolding optimization takes place. As long as there is no \textit{static} infinite recursion, then this leads to finite call unfolding. In the example of figure \ref{lst:mul}, the branch is static (it has $bt=1$) and as a result the loop is unfolded three times by exchanging the recursive call to \texttt{mul\_ml} with the specialization of the body of \texttt{mul\_ml}.
 
+In case a recursive call takes place in a branch with $bt > 1$, then the branch is still dynamic and it will be unknown when a base case for the recursion to bottom out will occur. Therefore, specialization will leave the recursive call. To demonstrate this consider the below figure \ref{fig:dynamic-branch}:
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[t]{0.49\linewidth}
+\begin{minted}[bgcolor=lightgray]{ocaml}
+[%%ml let mul_dynamic_if n m =
+if [%lift 2 m] < [%lift 2 1]
+then [%lift 2 0]
+else
+  [%add 2
+      [%lift 2 n]
+      [%app 2
+          (mul_dynamic_if                     
+             [%lift 1 n]
+             [%sub 2
+               [%lift 2 m]
+               [%lift 2 1]])]]
+]
+\end{minted}
+    \subcaption{mocaml program before specialization}
+  \end{subfigure}
+    \begin{subfigure}[t]{0.49\linewidth}
+\begin{minted}[bgcolor=lightgray]{ocaml}
+let rec mul_dynamic_if m =
+if [%lift 1 m] < [%lift 1 1]
+then [%lift 1 0]
+else
+  [%add
+    1 [%lift 1 7]
+      [%app 1
+         mul_ml_dynamic_if
+        [%sub 1
+          [%lift 1 m]
+          [%lift 1 1]]]]
+\end{minted}
+      \subcaption{mocaml program after specialization with n=7}
+  \end{subfigure}
+  \caption{Specialization of recursive function with dynamic branch.}
+  \label{fig:dynamic-branch}
+\end{figure}
+
+This program is similar to figure \ref{lst:mul}, but the branch is now dynamic. As a result, there is still a recursive call in the residual program. It can be observed that the remaining recursive call is missing an argument compared to the original function definition. This is because the specializer has replaced each occurrence of the original argument $n$ with the value $n=7$. As a last note about call unfolding, the remaining branch of the residual program is now static, and additional specialization would therefore lead to further call unfolding. The specializer would in fact finish the entire multiplication calculation.
+
+\subsection{Editor Support}
+
+What of the benefits that the mocaml program generator only modifies the OCaml AST is that existing OCaml tooling works. Emacs has great OCaml support and lets the programmer query a server (Merlin) about type information under the cursor. In the below listing, the the mocaml program from figure \ref{fig:ml_mul} is specialized for an input. The specialized program \texttt{mul\_ml'} is returned by Merlin to have the type \texttt{int -> int} as expected. 
+
+\begin{figure}[H]
+  \centering
+\begin{minted}{ocaml}
+let mul_ml' = [%run mul_ml 7]
+(* gives back the type: int -> int *)
+\end{minted}  
+  \caption{A specialized program will be treated as any hand written program. Editor tools usch as Merlin will thereby still work.}
+\end{figure}
+
+There is no easy way to see the contents of a generated program. Therefore, the program generator will as a side effect print the generated program. Syntax errors and type errors are currently also poorly supported. An error will be shown telling the programmer that there is a syntax or type error in the multi level program, but with no information about where.
 
 %%% Local Variables:
 %%% mode: LaTeX

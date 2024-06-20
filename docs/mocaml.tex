@@ -7,6 +7,10 @@
 \usepackage{float}
 \usepackage{tcolorbox}
 \usepackage{subcaption}
+\usepackage{stmaryrd}
+
+\newcommand{\typederiv}[3]{#1 \vdash #2 : #3}
+\newcommand{\deriv}[3]{\text{\small #1} \dfrac{#2}{#3}}
 
 
 \title{Mocaml - a multi level meta programming extension to OCaml}
@@ -23,10 +27,11 @@
 
 \tableofcontents
 
-\include{introduction}
-\include{implementation}
-\include{semantics}
-\include{conclusion}
+\input{introduction}
+\input{theory}
+\input{implementation}
+\input{semantics}
+\input{conclusion}
 
 \bibliographystyle{plain} % We choose the "plain" reference style
 \bibliography{references} % Entries are in the refs.bib file

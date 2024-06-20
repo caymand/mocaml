@@ -1,0 +1,44 @@
+
+\section{Generating Extensions and Program Generators}
+
+In the work by \cite{multilevel} the process of multi-level generating extensions is demonstrated. This will quickly be summarized as to demonstrate how mocaml differs from this approach. For a program \texttt{p} written in language \texttt{L} then let $\llbracket \mathtt{p}\rrbracket_\mathtt{L}~\mathtt{in}$ denote the application of \texttt{L} program \texttt{p} to its input \texttt{in}. The process of multi-level generating extensions for an \texttt{n}-inpit
+source program \texttt{p} is:
+
+\begin{align*}
+  \left. 
+  \begin{aligned}
+    \noalign{\vspace{-\baselineskip}}
+    \mathtt{p-mgen}_0 &= \llbracket \mathtt{mcogen}\rrbracket_\mathtt{L} \mathtt{p} ~ '0...n-1'\\  
+    \mathtt{p-mgen}_1 &= \llbracket \mathtt{p-mgen}_0\rrbracket_\mathtt{L} \mathtt{in}_0\\
+                      &\vdots\\
+    \mathtt{p-res}_1 &= \llbracket \mathtt{p-mgen}_{n-2}\rrbracket_\mathtt{L} \mathtt{in}_{n-2}\\
+    \mathtt{p-res}_1 &= \llbracket \mathtt{p-mgen}_{n-2}\rrbracket_\mathtt{L} \mathtt{in}_{n-2}\\
+    \mathtt{out}_1 &= \llbracket \mathtt{p-res}_{n-1}\rrbracket_\mathtt{L} \mathtt{in}_{n-1}
+  \end{aligned}
+  \right\}n~\text{stages}                     
+\end{align*}
+
+The multilevel program generator \texttt{mcogen} is first specialized w.r.t. the \texttt{L} program \texttt{p} and a multi-level annotation of the inputs with binding time (bt) classification $t_0,..,t_{n-1}$ to produce a multi-level \textit{generating extension} $\text{p-mgen}_0$. The generating extension is then specialized in $n$ stages with an input, and each staging produces a new program generator until a final output is produced.
+
+Program generation and specialization in mocaml is slightly different from the traditional generating extensions in partial evaluation. mocaml is used to handwrite OCaml program generators and the user must manually annotate the multi-level program with binding time information to stage the program. This is in contrast to BTA which, as it was noted in \cite{metaML}, can be seen as an automatic staging technique. Manual annotation might in some situation be preferred since the evaluation order can be controlled \cite{metaML}. Next, the user must invoke a special \texttt{run} operation that takes a multilevel $n$ input mocaml program \texttt{p} and an input $\mathtt{in}_i$. As a result, a new multilevel program is produced that might be specialized again with the remaining inputs. Without going into the details of mocaml, writing program generators looks as follows:
+
+\begin{align*}
+&\text{\texttt{let res1 = run p in}}_0\\
+&\text{\texttt{let res2 = run res1 in}}_1\\
+&...\\
+&\text{\texttt{let out = run res$_{n-1}$ in$_{n-1}$}}
+\end{align*}
+% They take BTA + converting the annotations into execurable generating extensions as mcogen
+% So when they get a program and input with bt-information, they generate a p-mgen0.
+% Then when given an input this again create a p-mgen1 and so on. So each time an input is given
+% a new generating extension is created. This is not what I do.
+
+% TODO is the duplicate
+% TODO: make sure it does not say program generator - we handwrite the program generator.
+% TODO: Make sure run is properly explained like in MetaML
+This looks similar to the multi-level specialization with multi-level generating extensions. Again, to summarize, the difference is however that the annotations are done manually and the output of each stage is a residual multi-level program that can be specialized further by the mocaml program specializer. Multi-level PE would on the other hand produce a multi-level generating extension at each stage. Additionally, in mocaml the output of any of the $n$ is a multi-level residual program which also be used as is since it is just a generated program.
+
+%%% Local Variables:
+%%% mode: LaTeX
+%%% TeX-master: "mocaml"
+%%% End:
