@@ -3,12 +3,12 @@
 
 \subsection{Type Chcking}
 
-OCaml is a strongly typed language with the property that well-typed OCaml programs do not go wrong as described in \cite{MilnerRobin1978Atot}. This is one of the main motivations for adding multi-level annotations to OCaml - handwritten program generators are still well-typed. This however only dictates that the OCaml types are consistent. It must also be ensured that the binding-time annotations of a mocaml program are consistent. For this reason, both aspect of well-typed mocaml programs will be discussed in this section.
+OCaml is a strongly typed language with the property that well-typed OCaml programs do not go wrong as described in \cite{MilnerRobin1978Atot}. This is one of the main motivations for adding multi-level annotations to OCaml - handwritten program generators are still well-typed. This however only dictates that the OCaml types are consistent. It must also be ensured that the binding-time annotations of a mocaml program are consistent. % For this reason, both aspect of well-typed mocaml programs will be discussed in this section.
 
-\subsubsection{Binding Time}
+\subsubsection{Binding Time Types}
 
 The same definitions of binding-time values (bt-values) and binding-time types (bt-types) of \cite{multilevel} will be used to describe the type checking of binding-time types in mocaml. Like in \cite{multilevel}, the different base type, denoted $B^t$ with binding type value $t$, are not distinguished between, since we do not care for them when type checking binding-time types. It is left to a later stage of the OCaml type checker to type check the OCaml base types.
-A big difference from \cite{multilevel} is that mocaml requires the programmer to manually annotate all multi-level construct with binding time information. The approach to binding-time type checking for ocaml is then done as an on-the-fly approach during specialization using the below rules. This catches any malformed binding time annotations and a suitable error message is given. The rules for type checking closely follows those in \cite{multilevel} and they are given below:
+A big difference from \cite{multilevel} is that mocaml requires the programmer to manually annotate all multi-level construct with binding time information. The approach to binding-time type checking for mocaml is then done as an on-the-fly approach during specialization using the below rules. This catches any malformed binding time annotations and a suitable error message is given. The rules for type checking closely follows those in \cite{multilevel} and they are given below:
 
 \begin{gather*}
   \deriv{Con}{}{\typederiv{\Gamma}{c}{B^0}} \quad
@@ -44,7 +44,7 @@ A big difference from \cite{multilevel} is that mocaml requires the programmer t
   }
 \end{gather*}
 
-Most of the rules are already explained in \cite{multilevel} and wont be repeated. Also note that there is not an \texttt{Op} rule like in \cite{multilevel}, but only a \texttt{plus} rule (the rules for subtraction, multiplication and division are analogous). The reason being that mocaml only supports a finite number of multi-level operations due to limitations of the implementation language OCaml. Future work could look into supporting more or arbitrary operators. Notably among the rules is the rule for application. It tells us that after $t$ specializations the result of the application will become available. This was also seen in the two-level program in figure \ref{lst:mul} where the result of the application was fully known after two specializations. %TODO: Is this correct.
+Most of the rules are already explained in \cite{multilevel} and wont be repeated. It can be noted that there is not an \texttt{Op} rule like in \cite{multilevel}, but only a \texttt{plus} rule (the rules for subtraction, multiplication and division are analogous). The reason being that mocaml only supports a finite number of multi-level operations due to limitations of the implementation language OCaml. Future work could look into supporting more or arbitrary operators. Notably among the rules is the rule for application. It tells us that after $t$ specializations the result of the application will become available. This was also seen in the two-level program in figure \ref{lst:mul} where the result of the application was fully known after two specializations. %TODO: Is this correct.
 
 \subsubsection{OCaml Type Checking}
 
@@ -81,13 +81,13 @@ let rec mul_dynamic_if m =
 if [%lift 1 m] < [%lift 1 1]
 then [%lift 1 0]
 else
-  [%add
-    1 [%lift 1 7]
-      [%app 1
-         mul_ml_dynamic_if
-        [%sub 1
-          [%lift 1 m]
-          [%lift 1 1]]]]
+  [%add 1
+    [%lift 1 7]
+    [%app 1
+       mul_ml_dynamic_if
+      [%sub 1
+        [%lift 1 m]
+        [%lift 1 1]]]]
 \end{minted}
       \subcaption{mocaml program after specialization with n=7}
   \end{subfigure}
@@ -97,9 +97,9 @@ else
 
 This program is similar to figure \ref{lst:mul}, but the branch is now dynamic. As a result, there is still a recursive call in the residual program. It can be observed that the remaining recursive call is missing an argument compared to the original function definition. This is because the specializer has replaced each occurrence of the original argument $n$ with the value $n=7$. As a last note about call unfolding, the remaining branch of the residual program is now static, and additional specialization would therefore lead to further call unfolding. The specializer would in fact finish the entire multiplication calculation.
 
-\subsection{Editor Support}
+\section{Editor Support}
 
-What of the benefits that the mocaml program generator only modifies the OCaml AST is that existing OCaml tooling works. Emacs has great OCaml support and lets the programmer query a server (Merlin) about type information under the cursor. In the below listing, the the mocaml program from figure \ref{fig:ml_mul} is specialized for an input. The specialized program \texttt{mul\_ml'} is returned by Merlin to have the type \texttt{int -> int} as expected. 
+One of the benefits that mocaml is implemented as a syntax extension on top of OCaml and only modifies the AST is that existing OCaml tooling works. Emacs has great OCaml support and lets the programmer query a server (Merlin) about type information under the cursor. In the below listing, the the mocaml program from figure \ref{fig:ml_mul} is specialized for an input. The generated program \texttt{mul\_ml'} is returned by Merlin to have the type \texttt{int -> int} as expected. 
 
 \begin{figure}[H]
   \centering
@@ -110,7 +110,7 @@ let mul_ml' = [%run mul_ml 7]
   \caption{A specialized program will be treated as any hand written program. Editor tools usch as Merlin will thereby still work.}
 \end{figure}
 
-There is no easy way to see the contents of a generated program. Therefore, the program generator will as a side effect print the generated program. Syntax errors and type errors are currently also poorly supported. An error will be shown telling the programmer that there is a syntax or type error in the multi level program, but with no information about where.
+There is no easy way to see the contents of a generated program. Therefore, the program generator will as a side effect print the generated program. Syntax errors and type errors are currently also poorly supported. An error will be shown with syntax or type error information, but with no information about where in the annotated mocaml program.
 
 %%% Local Variables:
 %%% mode: LaTeX

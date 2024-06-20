@@ -1,26 +1,27 @@
 
-\section{Implementation}
+\section{Generating Programs}
 
-% TODO do gentle introductino
+This section is dedicated so gently introduce the multi-level annotations of mocaml and later demonstrate how the mocaml specializer generates OCaml programs from an annotated program.
+
 \subsection{Multi Level OCaml Syntax Extensions}
 
-To facilitate multi-level features in OCaml, source programs must now use special multi-level operations. These are implemented as a special syntax extensions to the language. Below example demonstrates what these syntax extensions look like:
+To facilitate multi-level features in OCaml, source programs must now use special multi-level operations. These are implemented as a special syntax extensions to the language. In OCaml syntax extensions are written with the syntax \texttt{[\%\%...]} and \texttt{[\%...]}. Everything within the braces can then be easily interpreted by a syntax rewriter. Below example demonstrates what these syntax extensions look like:
 
 \begin{minted}{ocaml}
 (* Normal single-stage add program *)
 let add a b = a + b
 (* multi-level add program *)
 [%%ml let add a b = [%add 2
-          [%lift 1 1 a]
+          [%lift 1 1 a] (*a has bt 1 and is liftet to bt 1+1*)
           [%lift 2 b]]]
 \end{minted}
 
-As the above example demonstrates, multi-level programs are first decorated with the special \texttt{[\%\%ml ...]} syntax extension. This tells the multi-level compiler generator to treat the add program as a multi-level program. Within the \texttt{add} function, a syntax extension \texttt{[\%add t e1 e2]} is used. This means that add is a special multi-level code-generating addition function. Similarly, \texttt{lift} is also a syntax extension that, and the meaning of both operators is explained in the subsequent sections.
+As the above example demonstrates, multi-level programs are first decorated with the special \texttt{[\%\%ml ...]} syntax extension. This tells the syntax rewriter this should get treated as a multi-level program. Within the \texttt{add} function, a syntax extension \texttt{[\%add t e1 e2]} is used. This means that add is a special multi-level code-generating addition function. Similarly, \texttt{lift} is also a syntax extension that, and the meaning of both operators is explained in the subsequent sections.
 
 \subsection{Multi Level OCaml}
 
-The multi-level extensions to OCaml is called \textit{mocaml}, and the abstract syntax of the language is similar to \textit{MetaScheme} presented in \cite{multilevel}.
-Each multi-level construct of mocaml has an associated binding time $t \ge 0$ as an additional argument. In the above add program, the multi-level add operator has binding time \texttt{t=2}. The abstract syntax of \texttt{mocaml} is:
+The abstract syntax of mocaml is similar to \textit{MetaScheme} presented in \cite{multilevel}.
+Each multi-level construct of mocaml corresponds to an equivalent OCaml expression, but with an associated binding time $t \ge 0$ as an additional argument. In the above add program, the multi-level add operator has binding time \texttt{t=2}. The abstract syntax of \texttt{mocaml} is:
 
 \begin{gather*}  
   \boxed{    
@@ -41,16 +42,18 @@ Each multi-level construct of mocaml has an associated binding time $t \ge 0$ as
     |&~\text{\texttt{[\%div t e1 e2]}}
        ~|~\text{\texttt{[\%app t f e]}}
        ~|~\text{\texttt{[\%lift s t e]}}
-       ~|~\text{\texttt{[\%lift t e]}}\\
+       ~|~\text{\texttt{[\%lift s e]}}\\
     b :=&~\mathtt{true} ~|~\mathtt{false} ~|~\text{\texttt{e1 < e2}}
   \end{align*}
 \end{gather*}
 
-The operator \texttt{[\%lift s t e]} is equivalent to the definition in \cite{multilevel} and it coerces an expression of binding time \texttt{t} to an expression of binding time \texttt{s+t}. Similarly, \texttt{[\%lift t e]} is a shorthand for \texttt{s=0}. Currently, there is also a limitation that \texttt{app} can only be used to make recursive calls and not call arbitrary functions.
+A multi-level mocaml program is an annotated of OCaml program using the above syntax extensions. Except for the \texttt{if-then-else}, an annotation denotes the operator to use (application, lift or any of the arithmetic operators) and the binding time for that operator. Conceptually, this corresponds to the \texttt{(\_ 'op (es))} from \cite{multilevel}.
+
+The operator \texttt{[\%lift s t e]} is equivalent to the definition in \cite{multilevel} and it coerces an expression of binding time \texttt{t} to an expression of binding time \texttt{s+t}. Similarly, \texttt{[\%lift s e]} is a shorthand for when \texttt{t=0}. Currently, there is also a limitation that \texttt{app} can only be used to make recursive calls and not call arbitrary functions.
 
 \subsection{Program representation}
 
-Unlike Lisp, OCaml does not provide the ability to treat code as data, and a generating extension can not be represented in code as a multi-level program and a library for code generation and specialization as it is done in \cite{multilevel}. However, like in \cite{multilevel}, mocaml still only modifies the AST of OCaml.
+% Unlike Lisp, OCaml does not provide the ability to treat code as data, and a generating extension can not be represented in code as a multi-level program and a library for code generation and specialization as it is done in \cite{multilevel}. However, like in \cite{multilevel}, mocaml still only modifies the AST of OCaml.
 The \texttt{[\%run f e]} ocaml syntax extension gets the ParseTree\footnote{This is a tree sturcuture generated by the OCaml compiler after parsing and before type checking.} for \texttt{f}, and lifts it to a more manageable DSL that can handle specialization and code generation. This was inspired by the approach to two-level annotations by \cite{metaML} and \cite{metaOCaml}. Below are the type definitions for the mocaml DSL:
 
 \begin{listing}[H]
@@ -74,23 +77,20 @@ and ml_ops = Binop of int * ml_binop
            | Fun of string * ml_ops
            | IfElse of ml_cond * ml_ops * ml_ops
            | App of int * string * (ml_ops list)
-\end{minted}
-  % TODO: Make sure it is understandable what the DSL is and how we have to abstract syntax
+\end{minted}  
 \caption{Type signature for mocaml operations and expressions. These correspond to the abstract syntax of mocaml.}
 \label{lst:dsl}
 \end{listing}
 
-As it can be seen, the types correspond to the definitions of the abstract syntax of mocaml. The only base type allowed for mocaml is currently integers. The \texttt{ml\_expr} type is used to store binding time info of leaf nodes such as constants and argument identifiers. This way, an expression like \texttt{[\%lift 2 3]} can be compactly represented as an \texttt{ml\_expr} with \texttt{v=Val 3} and binding time $t=2$.
-It was briefly mentioned that specialization and code generation works on the DSL defined by the above types. Program generation itself happens in two stages:
-\begin{itemize}
-\item When the \texttt{[\%run ml\_func arg]} annotation is used, the syntax tree of the \texttt{ml\_func} is lifted into the above types and specialization takes place.
-  
-\item Then, code generation is conducted on the specialization. It is still possibly to further specialize the result given more arguments.
-\end{itemize}
+All multi-level annotation gets converted to multi-level operation. This is called an \texttt{ml\_ops} in the DSL. The leaf nodes of a multi-level operation is the \texttt{ml\_expr} record. This stores the binding time \texttt{t} of the variable together with its value (either a constant if its value is known at the current bt, or otherwise a variable identifier).
+These types correspond to the definitions of the abstract syntax of mocaml.
+Since the \texttt{ml\_expr} stores the binding time \texttt{t}, there is still a need to store the bt \texttt{s}. For this reason, an expression like \texttt{[\%lift 1 2 3]} can be compactly represented as a \texttt{Lift (1, \{t=2, v=(Val 3))\}}. This way we can conveniently discern the \texttt{s} and \texttt{t} components of the binding time.
+
+After lifting the annotation to the above types, program generation and specialization to the current input \texttt{in}$_i$ takes place.
 
 \subsection{Program Specilization}
 
-For a first example of hand writing program generators in mocaml consider the below listing \ref{lst:mul}. The multi level program \texttt{mul\_ml} is declared in the top left, and then specialized with respect to an input using the \texttt{run} primitive. The generated residual program is shown at the bottom. For reference, a semantically equivalent OCaml program is shown at the top right. The mocaml program is decorated with multi level operations and binding time information, but otherwise looks almost identical to the OCaml program. The same structure of \texttt{if-then-else} is used and the same operations are also used by the mocaml program.
+For a first example of hand writing program generators in mocaml consider the below listing \ref{lst:mul}. The multi level program \texttt{mul\_ml} is declared in the top left, and then specialized with respect to an input using the \texttt{run} primitive. The generated residual program is shown at the bottom in figure \ref{fig:mul_res}. For reference, a semantically equivalent OCaml program is shown at the top right. The mocaml program is an annotated OCaml program where each operation has associated binding time information. The multi-level program looks similar to the plain OCaml program - the same structure of \texttt{if-then-else} is used and the same operations are also used by the mocaml program.
 
 \begin{figure}[H]
   \centering
@@ -147,7 +147,8 @@ let res2 = 6
   \caption{Multi-level specialization of a multiplication program.}
   \label{lst:mul}
 \end{figure}
-As it was previously mentioned in listing \ref{lst:dsl}, \texttt{run} lifts a multi-level mocaml program into a OCaml DSL, and specialization then works on the DSL. The specializer works similar to the library described in \cite{multilevel}. For instance, when an operation like \texttt{add} or \texttt{sub} is hit by the sepcializer, it is checked whether the binding time is $t=1$, in which case the underlying OCaml implementation is used to calculate the result. Otherwise, the binding time is simply decreased by one. As a consequence of this, the residual program in figure \ref{fig:mul_res} has the bounds check and recursive calls have been eliminated by the specialization. For large inputs, specialization of recursive functions might lead to code explosion. Also note that if the residual program is specialized once more, then all constructs have binding time $t=1$, and we have a situation similar to traditional offline two-level partial evaluation where (in this case) all inputs are static and a result can be calculated. The resulting program after a second specialization is shown in figure \ref{fig:mul_final_res}.
+% As it was previously mentioned in listing \ref{lst:dsl}, \texttt{run} lifts a multi-level mocaml program into a OCaml DSL, and specialization then works on the DSL.
+The specializer works similar to the library described in \cite{multilevel}. For instance, when an operation like \texttt{add} or \texttt{sub} is hit by the sepcializer, it is checked whether the binding time is $t=1$, in which case the underlying OCaml implementation is used to calculate the result. Otherwise, the binding time is simply decreased by one. As a consequence of this, the residual program in figure \ref{fig:mul_res} has the bounds check and recursive calls have eliminated by the specialization. For large inputs, specialization of recursive functions might lead to code explosion. Also note that after the first specialization, all annotation have binding time $t=1$. This situation is similar to traditional offline two-level partial evaluation where (in this case) all inputs are static and a result can be calculated. When annotations have bt $> 1$ they can be treated as \textit{dynamic} and execution has to be delayed to a later stage. The resulting program after a second specialization is shown in figure \ref{fig:mul_final_res}.
 
 
 %%% Local Variables:

@@ -1,6 +1,48 @@
 
-\section{Results and Future Work}
-This work has demonstrated mocaml, a small multi-level extension to OCaml for writing program generators. In mocaml, expressions can be dynamic until a certain stage has been reach, and afterwords the expression becomes static and it can be partially evaluated. A call unfolding strategy was also presented. It guarantees that recursive calls are only unfolded if there is a guarantee that
+\section{Conclusion and Future Work}
+% This should also be about evaluating the design
+
+To conclude the work of mocaml we will look at a final example and evaluate the design of mocaml. The below figure \ref{fig:scale-sum} shows a program for calculating a scaled sum $\sum_{a}^b sa$. The program has three inputs. As a result, the the number of lift operations and bt annotattions start to clutter the program. Future work could start by implementing a multi-level binding time annotation to also enable the support for automatically annotated programs.\\
+
+\begin{figure}[H]
+  \centering
+\begin{minted}{ocaml}
+[%%ml let sum_scale s a b =
+if [%lift 3 b] < [%lift 1 2 a]
+then [%lift 3 0]
+else [%add 3
+    [%mul 3 [%lift 2 1 s] [%lift 3 b]]
+    [%app 3 (sum_scale
+               [%lift 1 s]
+               [%lift 2 a]
+               [%sub 3 [%lift 3 1] [%lift 3 b]])]
+]        
+]
+\end{minted}  
+  \caption{3-level program calculating the sum $\sum_{a}^b sa$}
+  \label{fig:scale-sum}
+\end{figure}
+
+The \texttt{sum\_scale} program can easily be used to write a program generator that as produces a residual program for calculating the sum $\sum_{i=0}^n i$ as follows:
+
+\begin{figure}[H]
+  \centering
+\begin{minted}{ocaml}
+let sum = [%run sum_scale]
+let sum_to n = [%run sum 0]
+\end{minted}  
+  \caption{Hand-written program generator to calculate the sum from $0...n$}
+  \label{fig:sum-res}
+\end{figure}
+
+Although the example is fairly contrived, it still highlights some important aspects about the design of mocaml such as code reuse. The single multi-level \texttt{sum\_scale} program can be used to generate many different programs by specializing different argument. For instance, by just specifying the scale parameter, we get a program that can compute any sum $sum_{i=a}^bi$. It can be imagined that if more OCaml features were added to mocaml, a more complex multi-level program could be written and more specialized programs could be generated - thus enabling more code reuse.\\
+Although it has not been tested, specialized programs should also perform better. Some computation can be precomputed, and some calls might even be fully evaluated. Function application is however limited to recursion and future work should look into the ability to call arbitrary mocaml functions.\\
+
+As a last remark, it should be noted that the implementation of call-unfolding can fail in some situations lead to infinite call unfolding. 
+% This problem occurs in dynamic branches when there is a \texttt{[\%lift s t var]} in the conditional with $t=1$ and $s > 0$. In the current implementation, the occurrence of variable \texttt{var} will be replaced with the current specializer argument \texttt{in}$_i$. This is however not safe in this situation because the variable was lifted to a later binding time
+
+
+To conclude, this work has introduced mocaml. A syntax extension to small subset OCaml with multi-level features enabling meta-programming features such as writing simple program generators. Generated programs are type safe and checked by the OCaml type checker. Since mocaml is a small layer on top of OCaml, error reporting such as type mismatch is still provided as user feedback.
 
 %%% Local Variables:
 %%% mode: LaTeX

@@ -8,6 +8,8 @@
 \usepackage{tcolorbox}
 \usepackage{subcaption}
 \usepackage{stmaryrd}
+\usepackage{hyperref}
+\usepackage{geometry}
 
 \newcommand{\typederiv}[3]{#1 \vdash #2 : #3}
 \newcommand{\deriv}[3]{\text{\small #1} \dfrac{#2}{#3}}
@@ -21,7 +23,7 @@
 \maketitle
 
 \begin{abstract}
-This work introduces \textit{mocaml}, a small syntax extension to OCaml adding meta-programming to a small subset of the language (arithmetic expressions, and function application) through multi-level programming features for handwriting program generators.
+This work introduces \textit{mocaml}, a small syntax extension to OCaml adding meta-programming to a small subset of the language (arithmetic expressions, branches, and function application) through multi-level programming features for handwriting program generators.
 
 Similar work to this has already been done, and \cite{two-stage} implements a two-level functional language with templates \texttt{<>} and escapes \texttt{\~} and \cite{metaML} implements a multi-stage ML inspired language with arbitrary stages. MetaOCaml is an OCaml dialect that also implements multi-stage programming to the langauge. Instead of going with two-level annotations, this work is inspired by \cite{multilevel} and adds multi level operations. This approach still allows the user to stage the computation into multiple stages.
 The implementation of mocaml uses quasi quotations to annotate OCaml programs with multi-level operations, and a syntax rewriter then rewrites the OCaml parsetree.
@@ -31,14 +33,38 @@ The implementation of mocaml uses quasi quotations to annotate OCaml programs wi
 
 \tableofcontents
 
+\clearpage
+
 \input{introduction}
 \input{theory}
 \input{implementation}
 \input{semantics}
 \input{conclusion}
 
+\clearpage
 \bibliographystyle{plain} % We choose the "plain" reference style
 \bibliography{references} % Entries are in the refs.bib file
+
+\clearpage
+\appendix
+
+\section{Code}
+\newgeometry{left=2cm, right=2cm, top=2cm, bottom=2cm}
+
+\subsection{mocaml Syntax and Types}
+
+\inputminted{ocaml}{/Users/kristofferkortbaek/src/PAT_project/mocaml/lib/multi_level_ops.ml}
+
+\subsection{Specializer}
+\inputminted{ocaml}{/Users/kristofferkortbaek/src/PAT_project/mocaml/lib/pe.ml}
+
+\subsection{Code Generator}
+\inputminted{ocaml}{/Users/kristofferkortbaek/src/PAT_project/mocaml/lib/codegen.ml}
+
+\subsection{Syntax Rewriter}
+\inputminted{ocaml}{/Users/kristofferkortbaek/src/PAT_project/mocaml/lib/extenders.ml}
+
+
 
 \end{document}
 
